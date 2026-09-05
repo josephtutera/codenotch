@@ -229,25 +229,25 @@ final class BackoffPersistenceTests: XCTestCase {
     func testRoundTrips() throws {
         let defaults = makeDefaults()
         let until = Date().addingTimeInterval(120)
-        UsageArchive(defaults: defaults).saveBackoffUntil(until)
+        UsageArchive(defaults: defaults).saveBackoffUntil(until, for: "claude")
 
-        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil())
+        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
         XCTAssertEqual(loaded.timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 0.01)
     }
 
     /// An expired back-off is not a back-off; it must not hold the next launch up.
     func testAnExpiredBackoffIsIgnored() {
         let defaults = makeDefaults()
-        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10))
-        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil())
+        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10), for: "claude")
+        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
     }
 
     func testClearingRemovesIt() {
         let defaults = makeDefaults()
         let archive = UsageArchive(defaults: defaults)
-        archive.saveBackoffUntil(Date().addingTimeInterval(120))
-        archive.saveBackoffUntil(nil)
-        XCTAssertNil(archive.loadBackoffUntil())
+        archive.saveBackoffUntil(Date().addingTimeInterval(120), for: "claude")
+        archive.saveBackoffUntil(nil, for: "claude")
+        XCTAssertNil(archive.loadBackoffUntil(for: "claude"))
     }
 }
 

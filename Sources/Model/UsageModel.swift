@@ -117,6 +117,14 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// Set when something is blocked right now. Deliberately separate from the
     /// windows: it is not a measurement, it is a door being shut.
     var block: UsageBlock?
+    /// Which tool the reading is borrowed from — see `ProviderKind`. Defaults
+    /// to `.other` so the many places that build a snapshot for a stub or a
+    /// fixture need not say.
+    var kind: ProviderKind = .other
+    /// Whose account, where the provider can tell — an email address, mostly.
+    /// With two accounts of one tool on the notch, this is what tells the
+    /// rings apart.
+    var accountLabel: String?
 
     /// The number on the cell: the provider's declared primary window — for
     /// Claude, the current session.
@@ -154,12 +162,12 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// Signing in means something different per provider, so the prompt has to
     /// say which door to knock on.
     private var authPrompt: String {
-        switch id {
-        case "claude":     return "Sign in to Claude Code to read your usage"
-        case "cursor":     return "Sign in to Cursor in the editor"
-        case "codex":      return "Sign in to Codex to read your usage"
-        case "gemini":     return "Sign in to Antigravity to read your usage"
-        default:           return "Sign in to \(displayName) to read your usage"
+        switch kind {
+        case .claude:      return "Sign in to Claude Code to read your usage"
+        case .cursor:      return "Sign in to Cursor in the editor"
+        case .codex:       return "Sign in to Codex to read your usage"
+        case .antigravity: return "Sign in to Antigravity to read your usage"
+        case .other:       return "Sign in to \(displayName) to read your usage"
         }
     }
 

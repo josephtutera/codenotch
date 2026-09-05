@@ -16,6 +16,17 @@ final class Preferences: ObservableObject {
         didSet { defaults.set(Array(disconnectedProviders), forKey: Keys.disconnected) }
     }
 
+    /// The accounts Codenotch reads for Claude Code and Codex — see
+    /// `ConfiguredAccount`. Cursor and Antigravity are not here: neither can
+    /// be signed in twice on one Mac, so each is always exactly one row.
+    @Published var accounts: [ConfiguredAccount] {
+        didSet {
+            guard accounts != oldValue,
+                  let data = try? JSONEncoder().encode(accounts) else { return }
+            defaults.set(data, forKey: Keys.accounts)
+        }
+    }
+
     /// How much of itself the notch shows at rest.
     @Published var notchVisibility: NotchVisibility {
         didSet { defaults.set(notchVisibility.rawValue, forKey: Keys.visibility) }
@@ -60,6 +71,7 @@ final class Preferences: ObservableObject {
         static let presence = "appPresence"
         static let edge = "notchEdge"
         static let lastSeenVersion = "lastSeenVersion"
+        static let accounts = "accounts"
     }
 
     /// True the very first time this copy runs, and never again.
@@ -99,6 +111,10 @@ final class Preferences: ObservableObject {
         self.isFirstLaunch = !defaults.bool(forKey: Keys.hasLaunched)
         defaults.set(true, forKey: Keys.hasLaunched)
         self.disconnectedProviders = Set(defaults.stringArray(forKey: Keys.disconnected) ?? [])
+        // Absent means never touched, which is the pair the app shipped with.
+        self.accounts = defaults.data(forKey: Keys.accounts)
+            .flatMap { try? JSONDecoder().decode([ConfiguredAccount].self, from: $0) }
+            ?? ConfiguredAccount.defaults
         // Absent means never chosen, which is the hover behaviour the app was
         // designed around — not hidden, which would make a fresh install look
         // like it failed to start.
@@ -131,6 +147,40 @@ final class Preferences: ObservableObject {
         } else {
             disconnectedProviders.insert(providerID)
         }
+    }
+
+    // MARK: - Accounts
+
+    /// A new account for a tool, keyed off its name and kept clear of any
+    /// account already there. Inserted beside the others of its kind, so the
+    /// notch keeps each tool's rings together.
+    @discardableResult
+    func addAccount(kind: ProviderKind, name: String, directory: String) -> ConfiguredAccount {
+        let base = ConfiguredAccount.slug(for: name)
+        let stem = base.isEmpty ? "account" : base
+        let taken = Set(accounts.map(\.id))
+        var slug = stem
+        var attempt = 2
+        while taken.contains("\(kind.rawValue).\(slug)") {
+            slug = "\(stem)-\(attempt)"
+            attempt += 1
+        }
+        let account = ConfiguredAccount(kind: kind, slug: slug, name: name, directory: directory)
+        let index = accounts.lastIndex { $0.kind == kind }.map { $0 + 1 } ?? accounts.endIndex
+        accounts.insert(account, at: index)
+        return account
+    }
+
+    func updateAccount(_ account: ConfiguredAccount) {
+        guard let index = accounts.firstIndex(where: { $0.id == account.id }) else { return }
+        accounts[index] = account
+    }
+
+    /// The tool's own directory cannot be removed — there would be nothing
+    /// left to read — only switched off.
+    func removeAccount(id: String) {
+        accounts.removeAll { $0.id == id && !$0.isDefault }
+        disconnectedProviders.remove(id)
     }
 
     /// Forget everything this app has stored and quit.

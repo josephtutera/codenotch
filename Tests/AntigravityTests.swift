@@ -902,15 +902,22 @@ final class ReauthorizeTests: XCTestCase {
 /// Only two providers keep a credential in the keychain; the others read files
 /// and can never raise a prompt.
 final class KeychainProviderTests: XCTestCase {
-    private func summary(_ id: String) -> ProviderSummary {
-        ProviderSummary(id: id, name: id, glyph: .claude, account: nil,
-                        signIn: .guidance("x"))
+    private func summary(_ kind: ProviderKind, id: String? = nil) -> ProviderSummary {
+        ProviderSummary(id: id ?? kind.rawValue, kind: kind, name: kind.displayName,
+                        glyph: .claude, account: nil, signIn: .guidance("x"))
     }
 
     func testOnlyKeychainBackedProvidersOfferIt() {
-        XCTAssertTrue(summary("claude").usesKeychain)
-        XCTAssertTrue(summary("gemini").usesKeychain)
-        XCTAssertFalse(summary("cursor").usesKeychain, "Cursor reads a file, not the keychain")
-        XCTAssertFalse(summary("codex").usesKeychain, "Codex reads a file, not the keychain")
+        XCTAssertTrue(summary(.claude).usesKeychain)
+        XCTAssertTrue(summary(.antigravity).usesKeychain)
+        XCTAssertFalse(summary(.cursor).usesKeychain, "Cursor reads a file, not the keychain")
+        XCTAssertFalse(summary(.codex).usesKeychain, "Codex reads a file, not the keychain")
+    }
+
+    /// Keyed on the tool, not the id: a second Claude account is as
+    /// keychain-backed as the first.
+    func testASecondAccountOfAKeychainToolOffersItToo() {
+        XCTAssertTrue(summary(.claude, id: "claude.max").usesKeychain)
+        XCTAssertFalse(summary(.codex, id: "codex.gmail").usesKeychain)
     }
 }

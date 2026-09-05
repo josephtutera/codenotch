@@ -4,6 +4,10 @@ import Foundation
 /// and the UI never dresses a derived number up as an official one.
 protocol UsageProvider {
     var id: String { get }
+    /// Which tool the reading is borrowed from. The id names the *account*;
+    /// this names the tool, and it is what wording, glyphs and keychain
+    /// behaviour key on — see `ProviderKind`.
+    var kind: ProviderKind { get }
     /// Enough to draw the cell even when a fetch has never succeeded.
     var displayName: String { get }
     var glyph: ProviderGlyph { get }

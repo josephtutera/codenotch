@@ -288,6 +288,17 @@ private struct ProviderTooltip: View {
                     .foregroundStyle(Palette.textPrimary)
             }
 
+            // Whose account, when the provider can say. With two rings for the
+            // same tool this is what tells them apart, so it sits under the
+            // title rather than in the settings sheet alone.
+            if let account = snapshot.accountLabel {
+                Text(account)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                    .padding(.top, NotchLayout.accountToTitle)
+            }
+
             if let block = snapshot.block {
                 BlockedRow(text: block.summary(now: now))
                     .padding(.top, NotchLayout.headerToBlock)
@@ -442,7 +453,8 @@ struct TooltipCard: View {
             sessionCount: activity?.sessions.count ?? 0,
             sessionCap: sessionCap,
             statusMessage: snapshot.statusMessage,
-            blockMessage: snapshot.block?.summary(now: now)
+            blockMessage: snapshot.block?.summary(now: now),
+            accountLine: snapshot.accountLabel != nil
         )
     }
 

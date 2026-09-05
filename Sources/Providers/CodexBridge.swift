@@ -59,10 +59,12 @@ enum CodexBridge {
     /// All three messages go out at once rather than waiting for the handshake
     /// to answer: the server reads them in order, and a round trip saved here is
     /// a round trip saved on every poll.
-    static func rateLimits(executable: URL, timeout: TimeInterval = 10) throws -> Data {
+    static func rateLimits(executable: URL, home: URL = CodexStore.defaultHome,
+                           timeout: TimeInterval = 10) throws -> Data {
         let process = Process()
         process.executableURL = executable
         process.arguments = ["app-server"]
+        process.environment = environment(home: home)
         let input = Pipe(), output = Pipe()
         process.standardInput = input
         process.standardOutput = output
@@ -94,6 +96,21 @@ enum CodexBridge {
         // silently becoming a stale rollout reading.
         Log.usage.error("codex: app server gave no answer to id \(requestID); said: \(String(decoding: buffer.prefix(400), as: UTF8.self), privacy: .public)")
         throw UsageProviderError.nothingMetered("Codex's app server did not answer")
+    }
+
+    /// The environment the app server runs in: ours, with `CODEX_HOME` set to
+    /// the account's directory.
+    ///
+    /// Always set, the default directory included, so the server reads the
+    /// same `auth.json` this provider labels its readings from. Inheriting a
+    /// `CODEX_HOME` from the app's own environment while the label came from
+    /// `~/.codex` would be two accounts wearing one ring.
+    static func environment(home: URL,
+                            base: [String: String] = ProcessInfo.processInfo.environment)
+        -> [String: String] {
+        var environment = base
+        environment["CODEX_HOME"] = home.path
+        return environment
     }
 
     static let requestID = 2

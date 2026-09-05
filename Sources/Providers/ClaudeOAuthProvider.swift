@@ -7,13 +7,22 @@ import os
 /// The numbers are Anthropic's, so this is `.official` — the tooltip shows them
 /// unqualified. The endpoint is not a published API, though, so every failure
 /// path degrades to a status the UI can render honestly rather than to a guess.
+///
+/// One instance per account. Each is a separately signed-in copy of Claude
+/// Code — its own configuration directory, its own keychain item, its own
+/// token — so two accounts on one Mac are two of these reading two items,
+/// with nothing shared but the endpoint.
 actor ClaudeOAuthProvider: UsageProvider {
-    nonisolated let id = "claude"
-    nonisolated let displayName = "Claude"
+    nonisolated let id: String
+    nonisolated let displayName: String
+    nonisolated let kind = ProviderKind.claude
     nonisolated let glyph = ProviderGlyph.claude
 
     private let endpoint = URL(string: "https://api.anthropic.com/api/oauth/usage")!
     private let session: URLSession
+    /// Which copy of Claude Code this reads: where its login and profile are.
+    private nonisolated let configured: ConfiguredAccount
+    private nonisolated let credentialStore: ClaudeCredentialStore
     /// Held between refreshes so the keychain is read once per token, not once
     /// per minute — a keychain read can put a prompt in front of the user.
     private var credentials: ClaudeCredentials?
@@ -32,18 +41,24 @@ actor ClaudeOAuthProvider: UsageProvider {
 
     private let archive: UsageArchive
 
-    init(session: URLSession = .shared, archive: UsageArchive = UsageArchive()) {
+    init(account: ConfiguredAccount = .defaultClaude,
+         session: URLSession = .shared,
+         archive: UsageArchive = UsageArchive()) {
+        self.id = account.id
+        self.displayName = account.displayName
+        self.configured = account
+        self.credentialStore = ClaudeCredentialStore(directory: account.directory)
         self.session = session
         self.archive = archive
         // Pick the back-off back up where the last run left it, so relaunching
         // during a penalty does not spend an attempt extending it.
-        self.retryNoEarlierThan = archive.loadBackoffUntil()
+        self.retryNoEarlierThan = archive.loadBackoffUntil(for: account.id)
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
         if let retryNoEarlierThan, retryNoEarlierThan > Date() {
             let remaining = retryNoEarlierThan.timeIntervalSinceNow
-            Log.usage.debug("skipping fetch, backing off for \(remaining, format: .fixed(precision: 0))s")
+            Log.usage.debug("\(self.id, privacy: .public): skipping fetch, backing off for \(remaining, format: .fixed(precision: 0))s")
             throw UsageProviderError.rateLimited(retryAfter: remaining)
         }
         do {
@@ -51,7 +66,7 @@ actor ClaudeOAuthProvider: UsageProvider {
             lastAuthFailure = nil
             retryNoEarlierThan = nil
             consecutiveRateLimits = 0
-            archive.saveBackoffUntil(nil)
+            archive.saveBackoffUntil(nil, for: id)
             return snapshot
         } catch UsageProviderError.needsAuth {
             credentials = nil
@@ -64,8 +79,8 @@ actor ClaudeOAuthProvider: UsageProvider {
             if case .rateLimited(let retryAfter) = error {
                 consecutiveRateLimits += 1
                 retryNoEarlierThan = Date().addingTimeInterval(retryAfter)
-                archive.saveBackoffUntil(retryNoEarlierThan)
-                Log.usage.notice("rate limited (\(self.consecutiveRateLimits)x), next attempt in \(retryAfter, format: .fixed(precision: 0))s")
+                archive.saveBackoffUntil(retryNoEarlierThan, for: id)
+                Log.usage.notice("\(self.id, privacy: .public): rate limited (\(self.consecutiveRateLimits)x), next attempt in \(retryAfter, format: .fixed(precision: 0))s")
             }
             throw error
         }
@@ -79,15 +94,15 @@ actor ClaudeOAuthProvider: UsageProvider {
         request.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         request.timeoutInterval = 15
 
-        Log.usage.debug("GET /api/oauth/usage")
+        Log.usage.debug("\(self.id, privacy: .public): GET /api/oauth/usage")
         let (data, response) = try await session.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        Log.usage.debug("usage endpoint answered \(status)")
+        Log.usage.debug("\(self.id, privacy: .public): usage endpoint answered \(status)")
 
         if status == 401 || status == 403 {
             // Rejected but unexpired: the held copy is wrong, which is what
             // signing into a different account looks like from here.
-            ClaudeCredentials.forgetCached()
+            credentialStore.forgetCached()
             // The cached token went stale mid-flight; re-read once in case
             // Claude Code has refreshed it since.
             credentials = nil
@@ -116,7 +131,9 @@ actor ClaudeOAuthProvider: UsageProvider {
             fidelity: .official,
             status: .ok,
             windows: payload.limitWindows(),
-            headlineID: "session"
+            headlineID: "session",
+            kind: kind,
+            accountLabel: emailAddress
         )
     }
 
@@ -127,8 +144,8 @@ actor ClaudeOAuthProvider: UsageProvider {
         if let lastAuthFailure, Date().timeIntervalSince(lastAuthFailure) < authRetryDelay {
             throw UsageProviderError.needsAuth
         }
-        let fresh = try ClaudeCredentials.load()
-        Log.usage.debug("read keychain token, expires \(fresh.expiresAt, privacy: .public)")
+        let fresh = try credentialStore.load()
+        Log.usage.debug("\(self.id, privacy: .public): read keychain token, expires \(fresh.expiresAt, privacy: .public)")
         // Expired is not signed out. Claude Code rotates this token whenever it
         // runs, and this app deliberately does not — minting one would mean
         // writing a credential it does not own, and racing the owner for it. So
@@ -170,21 +187,37 @@ actor ClaudeOAuthProvider: UsageProvider {
         return max(0, date.timeIntervalSinceNow)
     }
 
+    /// The whole answer for a second account is a second copy of Claude Code:
+    /// only the one pointed at this directory can sign it in, and only that one
+    /// refreshes its token afterwards.
+    nonisolated var signInRoute: SignInRoute {
+        if configured.signInCommand != nil {
+            return .guidance("Sign in with the command below, then use /login there. Keep "
+                             + "using that copy of Claude Code — only it refreshes this "
+                             + "account's token.")
+        }
+        return .guidance("Run Claude Code once — it signs in and refreshes the token this "
+                         + "reads. Use /login there to change account.")
+    }
+
+    nonisolated func forgetCachedCredential() { credentialStore.forgetCached() }
+
     /// Read straight from the keychain item rather than from the cached token,
     /// so the settings row reflects what the next fetch will actually use.
-    nonisolated var signInRoute: SignInRoute { .guidance("Run Claude Code once — it signs in and refreshes the token this "
-                  + "reads. Use /login there to change account.") }
-
-    nonisolated func forgetCachedCredential() { ClaudeCredentials.forgetCached() }
-
     nonisolated func account() -> ProviderAccount? {
-        guard let credentials = try? ClaudeCredentials.load() else { return nil }
+        guard let credentials = try? credentialStore.load() else { return nil }
         return ProviderAccount(
-            label: nil,   // the credential carries no address
+            label: emailAddress,
             plan: credentials.subscriptionType,
             source: "Claude Code",
             manageURL: URL(string: "https://claude.ai/settings/usage")
         )
+    }
+
+    /// The address this copy of Claude Code is signed in as. The credential
+    /// carries none; the profile beside it does.
+    private nonisolated var emailAddress: String? {
+        ClaudeProfile.emailAddress(in: ClaudeProfile.file(directory: configured.directory))
     }
 
     private static let decoder: JSONDecoder = {

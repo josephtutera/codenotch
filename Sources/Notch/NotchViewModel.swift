@@ -281,11 +281,17 @@ final class NotchViewModel: ObservableObject {
     func sessionCap(cellCount: Int) -> Int {
         guard screenSize != .zero else { return NotchLayout.defaultSessionCap }
         return NotchLayout.sessionsFitting(cardBudget: cardBudget(cellCount: cellCount),
-                                           windowCount: NotchLayout.maxWindowCount)
+                                           windowCount: NotchLayout.maxWindowCount,
+                                           accountLine: hasAccountLine)
     }
 
+    /// Whether any card names its account, which every card then has to leave
+    /// room for: the panel is sized once for the whole stack.
+    var hasAccountLine: Bool { snapshots.contains { $0.accountLabel != nil } }
+
     func maxCardHeight(cellCount: Int) -> CGFloat {
-        NotchLayout.maxCardHeight(sessionCap: sessionCap(cellCount: cellCount))
+        NotchLayout.maxCardHeight(sessionCap: sessionCap(cellCount: cellCount),
+                                  accountLine: hasAccountLine)
     }
 
     /// How tall the tallest card may be before the panel runs off the screen.

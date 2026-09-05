@@ -126,6 +126,7 @@ enum NotchLayout {
     static let barHeight     = Design.px(10.5)
     static let headerGap     = Design.px(17)    // glyph -> title
     static let headerToBlock = Design.px(21)
+    static let accountToTitle = Design.px(9)    // title -> account line
     static let labelToBar    = Design.px(16.8)
     static let barToUsed     = Design.px(17.8)
     static let blockSpacing  = Design.px(20)
@@ -274,9 +275,17 @@ enum NotchLayout {
     static func cardHeight(windowCount: Int, sessionCount: Int = 0,
                            sessionCap: Int = defaultSessionCap,
                            statusMessage: String? = nil,
-                           blockMessage: String? = nil) -> CGFloat {
+                           blockMessage: String? = nil,
+                           accountLine: Bool = false) -> CGFloat {
         let header = max(glyphSize, cardTitleLineHeight)
         var height = 2 * cardPadding + header
+
+        // Whose account this is, under the title. Only drawn when the provider
+        // can say — and with two rings for the same tool on the notch, it is
+        // the line that tells them apart.
+        if accountLine {
+            height += accountToTitle + cardBodyLineHeight
+        }
 
         // The blocked line sits under the header, above everything else — it
         // is the reading that stops you working, so it leads.
@@ -356,14 +365,16 @@ enum NotchLayout {
     /// is a sum of a dozen named parts, and an inverted copy of it would have
     /// to be kept in step by hand. The range is short enough that the search
     /// costs nothing.
-    static func sessionsFitting(cardBudget: CGFloat, windowCount: Int) -> Int {
+    static func sessionsFitting(cardBudget: CGFloat, windowCount: Int,
+                                accountLine: Bool = false) -> Int {
         var fits = 0
         for n in 1...sessionCeiling {
             // Costed as though something were still hidden, so that admitting
             // the nth row can never be what pushes the summary line off the
             // bottom of the card.
             let height = cardHeight(windowCount: windowCount,
-                                    sessionCount: n + 1, sessionCap: n)
+                                    sessionCount: n + 1, sessionCap: n,
+                                    accountLine: accountLine)
             guard height <= cardBudget else { break }
             fits = n
         }
@@ -384,9 +395,13 @@ enum NotchLayout {
     /// clicks through everywhere the chrome is not — but it cannot be so
     /// generous that the panel runs off the screen, which is what the cap is
     /// solved for.
-    static func maxCardHeight(sessionCap: Int) -> CGFloat {
+    /// `accountLine` is whether any card on the stack draws one: the panel is
+    /// sized once for the whole stack, so one provider that can name its
+    /// account costs every card the line's height in budget.
+    static func maxCardHeight(sessionCap: Int, accountLine: Bool = false) -> CGFloat {
         cardHeight(windowCount: maxWindowCount,
-                   sessionCount: sessionCap + 1, sessionCap: sessionCap)
+                   sessionCount: sessionCap + 1, sessionCap: sessionCap,
+                   accountLine: accountLine)
     }
 
     static let defaultMaxCardHeight = maxCardHeight(sessionCap: defaultSessionCap)

@@ -10,6 +10,7 @@ import os
 /// account, the one actually being used.
 actor CursorLocalProvider: UsageProvider {
     nonisolated let id = "cursor"
+    nonisolated let kind = ProviderKind.cursor
     nonisolated let displayName = "Cursor"
     nonisolated let glyph = ProviderGlyph.cursor
 

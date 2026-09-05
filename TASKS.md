@@ -1438,6 +1438,64 @@ Not an icon problem at all: the app had no Dock tile for an icon to sit on.
 - [x] Clicking the Dock icon opens settings, via the `applicationShouldHandle
       Reopen` hook added for the Hide option. The notch stays where it is.
 
+## Several accounts of one tool
+
+Two Claude subscriptions and two Codex subscriptions on one Mac, all four on
+the notch at once, each named. The whole trick is that both tools already keep
+their login under a directory they can be pointed at — `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME` — so a second account is a second directory, signed in separately,
+and Codenotch still signs in to nothing.
+
+- [x] `ConfiguredAccount`: kind, slug, name, directory. The tools' own
+      directories keep the ids `claude` and `codex`, so every existing archive
+      and connection choice survives; a named account is `claude.max`.
+- [x] `ProviderKind` on every provider, snapshot and summary. The id names the
+      *account* now, so the four places that matched on `"claude"` — the sign-in
+      wording, the keychain flag, the monitors map, the ids themselves — key on
+      the tool instead. Older archive entries infer the kind from their id.
+- [x] `ClaudeCredentialStore`, one per account. Claude Code keys its keychain
+      item to the directory: the plain name for `~/.claude`, and the first eight
+      hex digits of the path's SHA-256 appended for any other, which is how one
+      login keychain holds several of its logins. Pinned to a known digest by
+      `ClaudeKeychainServiceTests`. The `.credentials.json` file Claude Code
+      falls back to when the keychain refuses is read as a fallback too.
+- [x] The address comes from the profile beside the settings — `~/.claude.json`
+      for the default, `<dir>/.claude.json` for the rest — because the
+      credential carries none, and with two Claude rings the address is what
+      says which is which.
+- [x] `CodexLocalProvider` takes a home. The app server is spawned with
+      `CODEX_HOME` set — always, the default included, so the reading and the
+      label can never come from two different `auth.json`s. Rollout, thread
+      index and `auth.json` all resolve under the same home.
+- [x] The rate-limit back-off is keyed per provider. Two accounts are two
+      tokens with two buckets; one penalty must not silence the other. The
+      default account keeps the unqualified key it always had.
+- [x] `UsageStore.replaceProviders`: accounts added, renamed or removed in
+      Settings take effect without a relaunch. A fetch in flight against the old
+      list is cancelled rather than allowed to write the old list's snapshots
+      over the new ones, and a removed account's archived reading goes with it.
+- [x] `ProviderFactory` builds providers and monitors from the accounts in one
+      place, so a cell can never lack its monitor. Each Claude account watches
+      its own `sessions/`; each Codex account its own rollouts.
+- [x] Settings: **Add account…** opens a sheet for a name and a folder (the
+      folder follows the name — "Max" suggests `~/.claude-max` — until it is
+      typed in). Every account row has **Edit…**; the tools. own rows can only be
+      renamed. A row with nothing to read shows the exact command to run, with
+      Copy, because Codenotch cannot run it: the login is interactive and it
+      belongs to the tool.
+- [x] The tooltip names the account under the title. Real height, so it is in
+      the card budget — but reserved only when some card on the stack draws
+      one, or the smallest laptop's session cap dropped from four to three for
+      a line nobody was seeing.
+- [ ] A Claude account's token refreshes only when *its* copy of Claude Code
+      runs. An account left unused goes stale in the notch, dimmed and dated,
+      until that copy is used again. Refreshing here would mean writing a
+      credential this app does not own; the honest answer for now is a shell
+      alias per account.
+- [ ] Phase 2: switching the machine to an account (an `export` line to copy,
+      or a terminal opened with it set) and copying an account's OAuth token,
+      both of which fall out of the account being a directory.
+
 ## Decisions needed
 - [ ] Final app name (`Codenotch` is a placeholder)
 - [x] ~~Which service is the third glyph in the mockup?~~ Perplexity — its mark,
