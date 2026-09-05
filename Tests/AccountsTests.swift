@@ -67,6 +67,24 @@ final class ConfiguredAccountTests: XCTestCase {
         XCTAssertNil(ConfiguredAccount.defaultCodex.environmentPrefix)
     }
 
+    /// Codex refuses a `CODEX_HOME` that does not exist rather than making it.
+    func testItMakesItsFolderAndLeavesTheDefaultAlone() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("accounts-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appendingPathComponent(".codex-gmail").path
+
+        let gmail = ConfiguredAccount(kind: .codex, slug: "gmail", name: "Gmail", directory: folder)
+        try gmail.createDirectoryIfMissing()
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: folder, isDirectory: &isDirectory))
+        XCTAssertTrue(isDirectory.boolValue)
+        XCTAssertNoThrow(try gmail.createDirectoryIfMissing(), "already there is fine")
+
+        XCTAssertNoThrow(try ConfiguredAccount.defaultCodex.createDirectoryIfMissing(),
+                         "the default directory is the tool's to make")
+    }
+
     func testItRoundTripsThroughJSON() throws {
         let accounts = [
             ConfiguredAccount.defaultClaude,

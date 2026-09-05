@@ -83,6 +83,16 @@ struct ConfiguredAccount: Codable, Equatable, Identifiable {
         }
     }
 
+    /// Make the folder, so the tool can use it. Codex refuses a `CODEX_HOME`
+    /// that does not exist rather than creating it — "Error loading
+    /// configuration" — and Claude Code creates its own, so making it here
+    /// costs nothing there. Nothing for the default directory: it is the
+    /// tool's, and the tool made it.
+    func createDirectoryIfMissing(fileManager: FileManager = .default) throws {
+        guard let directory else { return }
+        try fileManager.createDirectory(atPath: directory, withIntermediateDirectories: true)
+    }
+
     // MARK: - The shipped pair
 
     static let defaultClaude = ConfiguredAccount(kind: .claude, slug: "", name: "", directory: nil)

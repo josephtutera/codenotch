@@ -131,12 +131,13 @@ struct AccountEditor: View {
         switch kind {
         case .claude:
             return "A separate copy of Claude Code keeps this account's login in the folder "
-                 + "above. After adding it, run the command on its row in a terminal and "
-                 + "use /login there. Only that copy refreshes this account's token, so "
+                 + "above, which is created if it does not exist. After adding it, run the "
+                 + "command on its row in a terminal and use /login there. Only that copy refreshes this account's token, so "
                  + "the reading goes stale if it is never used."
         case .codex:
-            return "A separate copy of Codex keeps this account's login in the folder above. "
-                 + "After adding it, run the command on its row in a terminal. The Codex "
+            return "A separate copy of Codex keeps this account's login in the folder above, "
+                 + "which is created if it does not exist. After adding it, run the command "
+                 + "on its row in a terminal. The Codex "
                  + "app itself always uses the default folder."
         default:
             return ""
@@ -147,13 +148,23 @@ struct AccountEditor: View {
         // Expanded here, once: the tool hashes the path it is given to name
         // its keychain item, so the same spelling has to be used everywhere.
         let folder = (trimmedDirectory as NSString).expandingTildeInPath
+        let account: ConfiguredAccount
         switch target {
         case .new(let kind):
-            preferences.addAccount(kind: kind, name: trimmedName, directory: folder)
-        case .existing(var account):
-            account.name = trimmedName
-            if !account.isDefault { account.directory = folder }
-            preferences.updateAccount(account)
+            account = preferences.addAccount(kind: kind, name: trimmedName, directory: folder)
+        case .existing(var edited):
+            edited.name = trimmedName
+            if !edited.isDefault { edited.directory = folder }
+            preferences.updateAccount(edited)
+            account = edited
+        }
+        // The tool has to find the folder there when the sign-in command runs.
+        // A failure is not worth blocking the save over: the row's command
+        // then fails with the tool's own message, which names the folder.
+        do {
+            try account.createDirectoryIfMissing()
+        } catch {
+            Log.usage.error("could not create \(account.directory ?? "", privacy: .public): \(error.localizedDescription, privacy: .public)")
         }
     }
 
