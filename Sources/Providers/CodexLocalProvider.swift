@@ -45,6 +45,13 @@ actor CodexLocalProvider: UsageProvider {
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
+        // No login in this home means nothing to read — not "no threads yet",
+        // which is what an empty home looks like from the rollout side, and
+        // not worth spawning an app server to be told.
+        guard FileManager.default.fileExists(atPath: CodexCredentials.authURL(home: home).path) else {
+            throw UsageProviderError.needsAuth
+        }
+
         // Codex itself first. The rollout below is a record of what was true
         // during the last turn; this is what is true now, and the two disagree
         // by however long it has been since Codex was used.

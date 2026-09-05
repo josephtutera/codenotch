@@ -82,7 +82,7 @@ enum CodexBridge {
             process.waitUntilExit()
         }
 
-        Log.usage.debug("codex: asking \(executable.path, privacy: .public) for rate limits")
+        Log.usage.debug("codex (\(home.lastPathComponent, privacy: .public)): asking \(executable.path, privacy: .public) for rate limits")
         for line in handshake { input.fileHandleForWriting.write(Data((line + "\n").utf8)) }
 
         var buffer = Data()
@@ -94,7 +94,7 @@ enum CodexBridge {
         }
         // Whatever it did say, so a protocol change is visible rather than
         // silently becoming a stale rollout reading.
-        Log.usage.error("codex: app server gave no answer to id \(requestID); said: \(String(decoding: buffer.prefix(400), as: UTF8.self), privacy: .public)")
+        Log.usage.error("codex (\(home.lastPathComponent, privacy: .public)): app server gave no answer to id \(requestID); said: \(String(decoding: buffer.prefix(400), as: UTF8.self), privacy: .public)")
         throw UsageProviderError.nothingMetered("Codex's app server did not answer")
     }
 

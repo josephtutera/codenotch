@@ -49,4 +49,40 @@ final class TooltipRenderTests: XCTestCase {
             try png.write(to: URL(fileURLWithPath: path))
         }
     }
+
+    /// Two rings of one glyph are told apart by the address under the title,
+    /// so the card has to lay that line out — and, with
+    /// `TOOLTIP_ACCOUNT_RENDER_PATH` set, show it.
+    func testTheCardLaysOutTheAccountLine() throws {
+        let snapshot = ProviderSnapshot(
+            id: "codex.gmail", displayName: "Codex Gmail", glyph: .openai,
+            fidelity: .official, status: .ok,
+            windows: [LimitWindow(id: "primary", label: "Weekly limit", usedFraction: 0.31,
+                                  resetsAt: Date().addingTimeInterval(3 * 24 * 3600))],
+            kind: .codex, accountLabel: "jctuterajr@gmail.com"
+        )
+        let plain = ProviderSnapshot(
+            id: "codex", displayName: "Codex", glyph: .openai,
+            fidelity: .official, status: .ok, windows: snapshot.windows, kind: .codex
+        )
+
+        func render(_ snapshot: ProviderSnapshot) throws -> NSImage {
+            let renderer = ImageRenderer(content: TooltipCard(snapshot: snapshot, now: Date())
+                .padding(20)
+                .background(Color.black))
+            renderer.scale = 3
+            return try XCTUnwrap(renderer.nsImage)
+        }
+
+        let named = try render(snapshot)
+        // The line is real height, so the named card is the taller of the two.
+        XCTAssertGreaterThan(named.size.height, try render(plain).size.height)
+
+        if let path = ProcessInfo.processInfo.environment["TOOLTIP_ACCOUNT_RENDER_PATH"] {
+            let tiff = try XCTUnwrap(named.tiffRepresentation)
+            let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?
+                .representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: path))
+        }
+    }
 }
