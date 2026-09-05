@@ -9,6 +9,8 @@ struct SettingsView: View {
     /// another app, so the user is always coming *back* here to see it — which
     /// makes returning focus the exact moment the old value is wrong.
     @State private var accounts: [ProviderSummary] = []
+    /// The account being named or added, while the sheet is up.
+    @State private var editing: AccountEditor.Target?
     /// Switching off has to reach the store's archive, not just the preference
     /// — see `UsageStore.signOut(providerID:)`.
     let signOut: (String) -> Void
@@ -31,10 +33,25 @@ struct SettingsView: View {
         Form {
             Section("Integrations") {
                 if needsSetup { setupNote }
-                ForEach(accounts) {
-                    AccountRow(provider: $0, preferences: preferences,
+                ForEach(accounts) { provider in
+                    AccountRow(provider: provider,
+                               configured: configured(for: provider),
+                               preferences: preferences,
                                signOut: signOut, signIn: signIn,
-                               switchAccount: switchAccount, retry: retry)
+                               switchAccount: switchAccount, retry: retry,
+                               edit: { editing = .existing($0) })
+                }
+                // A second account of one tool is a second folder, signed in
+                // separately; this names the folder, and the row it adds says
+                // how to sign it in.
+                HStack {
+                    Menu("Add account…") {
+                        Button("Claude Code account…") { editing = .new(.claude) }
+                        Button("Codex account…") { editing = .new(.codex) }
+                    }
+                    .controlSize(.small)
+                    .fixedSize()
+                    Spacer()
                 }
                 // Beside the switches it explains, not stranded at the end of
                 // the page.
@@ -141,10 +158,22 @@ struct SettingsView: View {
         // hunted for is not really a credit.
         .safeAreaInset(edge: .bottom, spacing: 0) { credit }
         .frame(width: SettingsView.width, height: SettingsView.height)
+        .sheet(item: $editing) { target in
+            AccountEditor(target: target, preferences: preferences)
+        }
         .onAppear { accounts = providers() }
+        // The list follows the accounts, since adding one is what most of
+        // these rows are for.
+        .onChange(of: preferences.accounts) { _, _ in accounts = providers() }
         .onReceive(NotificationCenter.default.publisher(
             for: NSWindow.didBecomeKeyNotification
         )) { _ in accounts = providers() }
+    }
+
+    /// The configured account behind a row, where the row is one — Cursor
+    /// and Antigravity have no entry, being one row each by nature.
+    private func configured(for provider: ProviderSummary) -> ConfiguredAccount? {
+        preferences.accounts.first { $0.id == provider.id }
     }
 
     private var credit: some View {
@@ -234,11 +263,14 @@ struct SettingsView: View {
 /// to go if there is nothing to read.
 private struct AccountRow: View {
     let provider: ProviderSummary
+    /// The named directory behind this row, when there is one to edit.
+    let configured: ConfiguredAccount?
     @ObservedObject var preferences: Preferences
     let signOut: (String) -> Void
     let signIn: (String) -> Bool
     let switchAccount: (String) -> Bool
     let retry: (String) -> Void
+    let edit: (ConfiguredAccount) -> Void
 
     private var isConnected: Bool { preferences.isConnected(provider.id) }
 
@@ -255,6 +287,15 @@ private struct AccountRow: View {
 
                 Text(provider.name)
                     .foregroundStyle(isConnected ? .primary : .secondary)
+
+                if let configured {
+                    Button("Edit…") { edit(configured) }
+                        .buttonStyle(.link)
+                        .controlSize(.small)
+                        .help(configured.isDefault
+                              ? "Rename this account."
+                              : "Rename this account, move its folder, or remove it.")
+                }
 
                 Spacer(minLength: 8)
 
@@ -319,21 +360,52 @@ private struct AccountRow: View {
                     }
                 }
                 // Says where the account actually lives, which is the whole
-                // answer to "how do I change it" — not here.
-                Text(provider.signIn.switchHint)
+                // answer to "how do I change it" — not here. For a named
+                // folder, that is the folder.
+                Text(configured?.directory.map { "Read from \($0)" } ?? provider.signIn.switchHint)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         } else {
-            HStack(spacing: 8) {
-                Text(provider.signIn.explanation)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-                if let title = provider.signIn.actionTitle, canOpenSignIn {
-                    Button(title) { _ = signIn(provider.id) }
-                        .controlSize(.small)
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text(provider.signIn.explanation)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let title = provider.signIn.actionTitle, canOpenSignIn {
+                        Button(title) { _ = signIn(provider.id) }
+                            .controlSize(.small)
+                    }
                 }
+                if let command = configured?.signInCommand {
+                    signInCommand(command)
+                }
+            }
+        }
+    }
 
+    /// The line to run in a terminal, ready to copy. Codenotch cannot run it:
+    /// the login is interactive, and it belongs to the tool.
+    private func signInCommand(_ command: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 6) {
+                Text(command)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(command, forType: .string)
+                }
+                .controlSize(.mini)
+                .help("Copies the command to paste into a terminal.")
+            }
+            if let note = configured?.signInNote {
+                Text(note)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

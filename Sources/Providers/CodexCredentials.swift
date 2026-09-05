@@ -7,8 +7,10 @@ import Foundation
 /// the id token's claims, which is a plain base64 payload; the signature is
 /// never checked because nothing is being authorised, only labelled.
 enum CodexCredentials {
-    static var authURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/auth.json")
+    static var authURL: URL { authURL(home: CodexStore.defaultHome) }
+
+    static func authURL(home: URL) -> URL {
+        home.appendingPathComponent("auth.json")
     }
 
     static func account(from url: URL = authURL) -> ProviderAccount? {

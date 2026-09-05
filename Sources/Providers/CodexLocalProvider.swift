@@ -9,23 +9,49 @@ import os
 /// rollout is found through Codex's thread index rather than by walking the
 /// sessions tree, which holds thousands of files.
 actor CodexLocalProvider: UsageProvider {
-    nonisolated let id = "codex"
-    nonisolated let displayName = "Codex"
+    nonisolated let id: String
+    nonisolated let displayName: String
+    nonisolated let kind = ProviderKind.codex
     nonisolated let glyph = ProviderGlyph.openai
 
+    /// Which copy of Codex this reads. Its `CODEX_HOME` holds the login, the
+    /// thread index and the rollouts, and it is what the app server is told
+    /// to use — so one Mac can carry a Codex account per directory.
+    private nonisolated let configured: ConfiguredAccount
+    private nonisolated let home: URL
     private let stateStore: URL
     /// Only the tail matters — the newest snapshot is at the end of the file.
     private let tailBytes = 256 * 1024
 
-    init(stateStore: URL = CodexStore.stateURL) {
-        self.stateStore = stateStore
+    init(account: ConfiguredAccount = .defaultCodex) {
+        id = account.id
+        displayName = account.displayName
+        configured = account
+        home = account.directoryURL
+        stateStore = CodexStore.stateURL(home: home)
     }
 
-    nonisolated var signInRoute: SignInRoute { .openApp(bundleID: "com.openai.codex", name: "Codex") }
+    /// The desktop app can only ever sign in `~/.codex`, so a second directory
+    /// is signed in from a terminal, and the row has to say so.
+    nonisolated var signInRoute: SignInRoute {
+        configured.signInCommand == nil
+            ? .openApp(bundleID: "com.openai.codex", name: "Codex")
+            : .guidance("Sign in with the command below — the Codex app cannot sign a "
+                        + "second directory in.")
+    }
 
-    nonisolated func account() -> ProviderAccount? { CodexCredentials.account() }
+    nonisolated func account() -> ProviderAccount? {
+        CodexCredentials.account(from: CodexCredentials.authURL(home: home))
+    }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
+        // No login in this home means nothing to read — not "no threads yet",
+        // which is what an empty home looks like from the rollout side, and
+        // not worth spawning an app server to be told.
+        guard FileManager.default.fileExists(atPath: CodexCredentials.authURL(home: home).path) else {
+            throw UsageProviderError.needsAuth
+        }
+
         // Codex itself first. The rollout below is a record of what was true
         // during the last turn; this is what is true now, and the two disagree
         // by however long it has been since Codex was used.
@@ -33,7 +59,8 @@ actor CodexLocalProvider: UsageProvider {
             return ProviderSnapshot(
                 id: id, displayName: displayName, glyph: glyph,
                 fidelity: .official, status: .ok, windows: live.windows,
-                headlineID: "primary", block: live.block
+                headlineID: "primary", block: live.block,
+                kind: kind, accountLabel: account()?.label
             )
         }
 
@@ -50,7 +77,9 @@ actor CodexLocalProvider: UsageProvider {
             fidelity: .official,
             status: Self.status(recordedAt: CodexUsage.recordedAt(inRollout: text)),
             windows: windows,
-            headlineID: "primary"
+            headlineID: "primary",
+            kind: kind,
+            accountLabel: account()?.label
         )
     }
 
@@ -63,9 +92,10 @@ actor CodexLocalProvider: UsageProvider {
     /// caller has an honest fallback either way.
     private func liveReading() async -> (windows: [LimitWindow], block: UsageBlock?)? {
         guard let executable = CodexBridge.executable() else { return nil }
+        let home = self.home
         let answer = await Task.detached(priority: .utility) { () -> Data? in
             do {
-                return try CodexBridge.rateLimits(executable: executable)
+                return try CodexBridge.rateLimits(executable: executable, home: home)
             } catch {
                 Log.usage.error("codex: app server failed: \(String(describing: error), privacy: .public)")
                 return nil
@@ -118,8 +148,15 @@ actor CodexLocalProvider: UsageProvider {
 
 /// Shared access to Codex's local state.
 enum CodexStore {
-    static var stateURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/state_5.sqlite")
+    /// `~/.codex`, where Codex keeps itself unless `CODEX_HOME` says otherwise.
+    static var defaultHome: URL {
+        URL(fileURLWithPath: ConfiguredAccount.defaultDirectory(for: .codex))
+    }
+
+    static var stateURL: URL { stateURL(home: defaultHome) }
+
+    static func stateURL(home: URL) -> URL {
+        home.appendingPathComponent("state_5.sqlite")
     }
 
     /// The desktop app's own thread catalogue.
@@ -129,9 +166,10 @@ enum CodexStore {
     /// now — writes none of them; it keeps its threads here instead, with
     /// `source_kind = 'chatgpt'`. Watching only the rollouts meant the notch
     /// could never see the desktop app working at all.
-    static var desktopStoreURL: URL {
-        URL(fileURLWithPath: NSHomeDirectory())
-            .appendingPathComponent(".codex/sqlite/codex-dev.db")
+    static var desktopStoreURL: URL { desktopStoreURL(home: defaultHome) }
+
+    static func desktopStoreURL(home: URL) -> URL {
+        home.appendingPathComponent("sqlite/codex-dev.db")
     }
 
     /// The most recently touched desktop thread: when, and what it is called.

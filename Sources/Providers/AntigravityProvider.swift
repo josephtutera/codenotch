@@ -16,6 +16,7 @@ import os
 /// blank, especially in something people pay for.
 actor AntigravityProvider: UsageProvider {
     nonisolated let id = "gemini"
+    nonisolated let kind = ProviderKind.antigravity
     // The id stays `gemini`: it keys the archive and the user's connection
     // choice, and changing it would silently discard both.
     nonisolated let displayName = "Antigravity"

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -15,48 +16,33 @@ struct ClaudeCredentials {
 
     var isExpired: Bool { expiresAt <= Date() }
 
-    static let service = "Claude Code-credentials"
+    /// The item Claude Code writes for its default directory, `~/.claude`.
+    static let defaultService = "Claude Code-credentials"
 
-    /// Read once, then held until the token expires — see `CredentialCache`.
-    /// Claude Code rotates this roughly hourly, so this is about one keychain
-    /// read an hour instead of two a minute.
-    private static let cache = CredentialCache<ClaudeCredentials> { $0.isExpired }
-
-    /// Forget the held copy. Call when the server rejects it: signing into a
-    /// different account replaces the keychain item, and the copy in hand is
-    /// then wrong despite not having expired.
-    static func forgetCached() { cache.forget() }
-
-    /// Reads whatever is stored, expired or not. Judging expiry is the caller's
-    /// job, because "signed out" and "the token has aged out overnight" call for
-    /// different behaviour and only one of them is worth alarming anyone about.
-    static func load() throws -> ClaudeCredentials {
-        try cache.value(
-            itemModifiedAt: { KeychainItem.modifiedAt(service: service) },
-            reload: read
-        )
+    /// The keychain item Claude Code writes for a configuration directory.
+    ///
+    /// The default directory owns the plain name. Any other directory — one
+    /// named by `CLAUDE_CONFIG_DIR` — gets the first eight hex digits of the
+    /// path's SHA-256 appended, which is how one Mac holds several Claude Code
+    /// logins at once without them overwriting each other. Claude Code's rule,
+    /// not ours, so it is pinned by a test on the shape and checked against the
+    /// real item the first time a second account is signed in.
+    static func keychainService(directory: String?) -> String {
+        guard let directory else { return defaultService }
+        let digest = SHA256.hash(data: Data(directory.utf8))
+        let prefix = digest.prefix(4).map { String(format: "%02x", $0) }.joined()
+        return "\(defaultService)-\(prefix)"
     }
 
-    private static func read() throws -> ClaudeCredentials {
-        var item: CFTypeRef?
-        let status = SecItemCopyMatching([
-            kSecClass: kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecReturnData: true,
-            kSecMatchLimit: kSecMatchLimitOne
-        ] as CFDictionary, &item)
+    /// Where Claude Code writes the login instead when the keychain refuses —
+    /// locked in an SSH session, say. Read as a fallback for the same reason
+    /// Claude Code writes it as one.
+    static func fallbackFile(directory: URL) -> URL {
+        directory.appendingPathComponent(".credentials.json")
+    }
 
-        guard status == errSecSuccess, let data = item as? Data else {
-            // The status matters: "not found" means Claude Code has never signed
-            // in, whereas -25308 (interaction not allowed) or -128 (user
-            // cancelled) mean the item is there but this app is not on its
-            // access list. Those need very different advice, so record which.
-            Log.usage.error("keychain read failed: OSStatus \(status) (\(Self.explain(status), privacy: .public))")
-            throw Self.wasRefused(status)
-                ? UsageProviderError.accessDenied
-                : UsageProviderError.needsAuth
-        }
-
+    /// The shape of the item, which is the same in the keychain and the file.
+    static func decode(_ data: Data) throws -> ClaudeCredentials {
         struct Payload: Decodable {
             struct OAuth: Decodable {
                 let accessToken: String
@@ -67,11 +53,9 @@ struct ClaudeCredentials {
             let claudeAiOauth: OAuth
         }
 
-        let decoder = JSONDecoder()
-        guard let payload = try? decoder.decode(Payload.self, from: data) else {
+        guard let payload = try? JSONDecoder().decode(Payload.self, from: data) else {
             throw UsageProviderError.needsAuth
         }
-
         return ClaudeCredentials(
             accessToken: payload.claudeAiOauth.accessToken,
             expiresAt: Date(timeIntervalSince1970: payload.claudeAiOauth.expiresAt / 1000),
@@ -79,9 +63,6 @@ struct ClaudeCredentials {
         )
     }
 
-    /// Which keychain refusal this was. "Not found" means Claude Code has never
-    /// signed in; -25308 or -128 mean the item exists but this app is not on its
-    /// access list. Those need entirely different advice, so the log says which.
     /// Whether macOS refused a credential that exists, rather than failing to
     /// find one.
     ///
@@ -94,6 +75,9 @@ struct ClaudeCredentials {
             || status == errSecInteractionNotAllowed
     }
 
+    /// Which keychain refusal this was. "Not found" means Claude Code has never
+    /// signed in; -25308 or -128 mean the item exists but this app is not on its
+    /// access list. Those need entirely different advice, so the log says which.
     static func explain(_ status: OSStatus) -> String {
         switch status {
         case errSecItemNotFound:          return "no such item — Claude Code has not signed in"
@@ -103,5 +87,116 @@ struct ClaudeCredentials {
         default:
             return (SecCopyErrorMessageString(status, nil) as String?) ?? "unknown"
         }
+    }
+}
+
+/// Reads one Claude Code login, wherever that copy of Claude Code keeps it.
+///
+/// One per account: each configuration directory is a separately signed-in
+/// copy of Claude Code with its own keychain item, and each item is read once
+/// and held until it changes — see `CredentialCache`. Claude Code rotates the
+/// token roughly hourly, so this is about one keychain read an hour per account
+/// instead of two a minute.
+final class ClaudeCredentialStore: Sendable {
+    let service: String
+    let fallbackFile: URL
+    private let cache: CredentialCache<ClaudeCredentials>
+
+    /// `directory` is the account's `CLAUDE_CONFIG_DIR`, or nil for `~/.claude`.
+    init(directory: String? = nil) {
+        service = ClaudeCredentials.keychainService(directory: directory)
+        fallbackFile = ClaudeCredentials.fallbackFile(
+            directory: URL(fileURLWithPath: directory
+                ?? ConfiguredAccount.defaultDirectory(for: .claude))
+        )
+        cache = CredentialCache { $0.isExpired }
+    }
+
+    /// Forget the held copy. Call when the server rejects it: signing into a
+    /// different account replaces the keychain item, and the copy in hand is
+    /// then wrong despite not having expired.
+    func forgetCached() { cache.forget() }
+
+    /// Reads whatever is stored, expired or not. Judging expiry is the caller's
+    /// job, because "signed out" and "the token has aged out overnight" call for
+    /// different behaviour and only one of them is worth alarming anyone about.
+    func load() throws -> ClaudeCredentials {
+        try cache.value(
+            itemModifiedAt: { KeychainItem.modifiedAt(service: service) ?? fileModifiedAt() },
+            reload: read
+        )
+    }
+
+    /// The fallback file's stamp, so the cache can tell whether it moved.
+    private func fileModifiedAt() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: fallbackFile.path))?[.modificationDate] as? Date
+    }
+
+    private func read() throws -> ClaudeCredentials {
+        var item: CFTypeRef?
+        let status = SecItemCopyMatching([
+            kSecClass: kSecClassGenericPassword,
+            kSecAttrService: service,
+            kSecReturnData: true,
+            kSecMatchLimit: kSecMatchLimitOne
+        ] as CFDictionary, &item)
+
+        if status == errSecSuccess, let data = item as? Data {
+            return try ClaudeCredentials.decode(data)
+        }
+        if status == errSecItemNotFound, let data = try? Data(contentsOf: fallbackFile) {
+            Log.usage.debug("no keychain item \(self.service, privacy: .public); reading \(self.fallbackFile.path, privacy: .public)")
+            return try ClaudeCredentials.decode(data)
+        }
+
+        // The status matters: "not found" means Claude Code has never signed
+        // in, whereas -25308 (interaction not allowed) or -128 (user cancelled)
+        // mean the item is there but this app is not on its access list. Those
+        // need very different advice, so record which.
+        Log.usage.error("keychain read of \(self.service, privacy: .public) failed: OSStatus \(status) (\(ClaudeCredentials.explain(status), privacy: .public))")
+        throw ClaudeCredentials.wasRefused(status)
+            ? UsageProviderError.accessDenied
+            : UsageProviderError.needsAuth
+    }
+}
+
+/// The account a copy of Claude Code is signed in as, from the profile it
+/// caches beside its settings. The credential itself carries no address, and
+/// with two Claude accounts on one Mac the address is the only thing that says
+/// which ring is which.
+enum ClaudeProfile {
+    /// The default copy keeps it at `~/.claude.json` — beside `~/.claude`, not
+    /// inside it. A copy pointed at `CLAUDE_CONFIG_DIR` keeps it in that
+    /// directory.
+    static func file(directory: String?, home: String = NSHomeDirectory()) -> URL {
+        URL(fileURLWithPath: directory ?? home).appendingPathComponent(".claude.json")
+    }
+
+    static func emailAddress(in file: URL) -> String? {
+        account(in: file)?["emailAddress"] as? String
+    }
+
+    /// The address, and the organisation where that says something the
+    /// address does not.
+    ///
+    /// One person's Team and Max accounts share an address — that is what
+    /// made two Claude rings read identically — and differ by organisation:
+    /// "CarePilot" against "joseph@…'s Organization". The personal one is
+    /// named after its address, so it adds nothing and is left off.
+    static func label(in file: URL) -> String? {
+        guard let account = account(in: file),
+              let email = account["emailAddress"] as? String else { return nil }
+        guard let organization = account["organizationName"] as? String,
+              !organization.isEmpty,
+              !organization.localizedCaseInsensitiveContains(email)
+        else { return email }
+        return "\(email) · \(organization)"
+    }
+
+    private static func account(in file: URL) -> [String: Any]? {
+        guard let data = try? Data(contentsOf: file),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        return root["oauthAccount"] as? [String: Any]
     }
 }

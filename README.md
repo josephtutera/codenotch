@@ -78,6 +78,26 @@ make run                # generate, build, launch
 make test               # unit tests
 ```
 
+## Several accounts of one tool
+
+Claude Code and Codex each keep their login under one directory, and each can
+be pointed at another with an environment variable — `CLAUDE_CONFIG_DIR` and
+`CODEX_HOME`. A second directory is a second, separately signed-in copy of the
+tool, and that is all a second account is here: Settings → **Add account…**
+names it and picks its folder, and the row it adds shows the one command to run
+in a terminal to sign that folder in. Codenotch still signs in to nothing; it
+just knows more than one place to borrow from. Each account is its own ring,
+named the way you named it, with the address it is signed in as under the
+tooltip's title — and the organisation, where two accounts share an address —
+so two rings of one glyph can be told apart.
+
+Two things follow from the credential belonging to the tool. A Claude account's
+token is refreshed only by the copy of Claude Code that owns it, so an account
+you never use goes stale in the notch — dimmed, with its age — until you run
+that copy again. And the Codex *app* always uses `~/.codex`, so a second Codex
+account is signed in with `codex login` from a terminal and read live from its
+own app server, which is what the notch already does for the first one.
+
 ## The honest caveat
 
 No LLM vendor publishes a clean "your session limit is N% used" API. The data layer is

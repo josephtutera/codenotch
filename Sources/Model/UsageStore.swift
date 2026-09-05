@@ -10,7 +10,9 @@ final class UsageStore: ObservableObject {
     /// Providers with a fetch in flight, so the cell can show it happening.
     @Published private(set) var refreshing: Set<String> = []
 
-    private let providers: [UsageProvider]
+    /// Replaced wholesale when accounts are added or removed — see
+    /// `replaceProviders`.
+    private(set) var providers: [UsageProvider]
     /// Providers the user has switched off. They are not fetched at all — their
     /// credential is never read, which is the whole point of switching one off.
     /// Filtering the results afterwards would still touch the keychain.
@@ -93,11 +95,42 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// Swap the provider list for another, keeping what is known about the
+    /// providers that survive.
+    ///
+    /// Adding, renaming or removing an account in settings lands here. The
+    /// store is built once at launch, and rebuilding it — bindings, timer,
+    /// wake observer and all — for a rename would be a restart by another
+    /// name. A removed provider's remembered reading goes with it, for the
+    /// reason `signOut` gives: nothing should bring numbers back for an
+    /// account that was deliberately taken off the notch.
+    func replaceProviders(_ replacements: [UsageProvider]) {
+        let removed = Set(providers.map(\.id)).subtracting(replacements.map(\.id))
+        providers = replacements
+        for id in removed {
+            lastGood.removeValue(forKey: id)
+            archive.forget(id)
+        }
+        // A fetch already in flight was started against the old list, and
+        // would finish by writing the old list's snapshots over the new ones.
+        refreshTask?.cancel()
+        isRefreshing = false
+        snapshots = replacements.filter { !disconnected.contains($0.id) }.map { provider in
+            if let current = snapshots.first(where: { $0.id == provider.id }) { return current }
+            guard let remembered = lastGood[provider.id] else { return Self.placeholder(provider) }
+            var snapshot = remembered.snapshot
+            snapshot.status = .stale(since: remembered.fetchedAt)
+            return snapshot
+        }
+        refreshNow()
+    }
+
     /// Enough to list the providers in settings without exposing them.
     var providerSummaries: [ProviderSummary] {
         providers.map {
-            ProviderSummary(id: $0.id, name: $0.displayName, glyph: $0.glyph,
-                            account: $0.account(), signIn: $0.signInRoute)
+            ProviderSummary(id: $0.id, kind: $0.kind, name: $0.displayName,
+                            glyph: $0.glyph, account: $0.account(),
+                            signIn: $0.signInRoute)
         }
     }
 
@@ -160,6 +193,9 @@ final class UsageStore: ObservableObject {
         lastAttempt = Date()
         refreshTask = Task { [weak self] in
             await self?.refresh()
+            // A cancelled refresh was superseded by another; the flag is that
+            // one's to clear, not this one's.
+            guard !Task.isCancelled else { return }
             self?.isRefreshing = false
         }
     }
@@ -172,6 +208,10 @@ final class UsageStore: ObservableObject {
         for provider in live {
             next.append(await snapshot(from: provider))
         }
+        // Superseded mid-flight by `replaceProviders`: these are the old
+        // list's readings, and writing them would bring back cells that
+        // have just been removed.
+        guard !Task.isCancelled else { return }
         snapshots = next
     }
 
@@ -377,7 +417,8 @@ final class UsageStore: ObservableObject {
             glyph: provider.glyph,
             fidelity: .official,
             status: .stale(since: .distantPast),
-            windows: []
+            windows: [],
+            kind: provider.kind
         )
     }
 }

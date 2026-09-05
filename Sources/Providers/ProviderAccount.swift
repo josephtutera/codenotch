@@ -84,6 +84,9 @@ enum SignInRoute: Equatable {
 }
 
 extension UsageProvider {
+    /// Stubs and web sessions have no local tool behind them.
+    var kind: ProviderKind { .other }
+
     /// Providers that borrow no credential have no account to show.
     ///
     /// A default for a requirement *declared in the protocol* is fine — the
@@ -108,15 +111,18 @@ extension UsageProvider {
 
 /// A provider as the settings sheet needs it.
 struct ProviderSummary: Identifiable, Equatable {
-    /// Whether this provider's credential lives in the keychain, and so can be
-    /// refused. Cursor and Codex read ordinary files and never prompt, so
-    /// offering them an "allow access" button would be offering a cure for an
-    /// illness they cannot catch.
-    var usesKeychain: Bool { id == "claude" || id == "gemini" }
-
     let id: String
+    /// Which tool, so the sheet knows whether the credential lives in the
+    /// keychain and can be refused. Keyed on the tool rather than the id since
+    /// accounts arrived: `claude.max` is as keychain-backed as `claude`.
+    var kind: ProviderKind = .other
     let name: String
     let glyph: ProviderGlyph
     let account: ProviderAccount?
     let signIn: SignInRoute
+
+    /// Cursor and Codex read ordinary files and never prompt, so offering them
+    /// an "allow access" button would be offering a cure for an illness they
+    /// cannot catch.
+    var usesKeychain: Bool { kind.usesKeychain }
 }

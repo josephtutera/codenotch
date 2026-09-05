@@ -14,11 +14,21 @@ struct UsageArchive {
         let fidelity: Fidelity
         let windows: [LimitWindow]
         let fetchedAt: Date
+        /// Added with accounts. Absent from older archives, where the id *was*
+        /// the tool.
+        var kind: ProviderKind?
+        var accountLabel: String?
     }
 
     private let defaults: UserDefaults
     private let key = "lastGoodReadings"
-    private let backoffKey = "backoffUntil"
+    /// One key per provider. Two Claude accounts are two tokens with two
+    /// rate-limit buckets, and one penalty must not silence the other. The
+    /// default Claude account keeps the key its penalty was first stored
+    /// under, so an update mid-penalty still waits it out.
+    private func backoffKey(for providerID: String) -> String {
+        providerID == "claude" ? "backoffUntil" : "backoffUntil.\(providerID)"
+    }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -32,18 +42,20 @@ struct UsageArchive {
     /// request immediately — so a development loop of `make run` walks straight
     /// into the rate limit it is being punished by, and keeps the punishment
     /// alive. Which is exactly what happened.
-    func loadBackoffUntil() -> Date? {
-        guard let date = defaults.object(forKey: backoffKey) as? Date, date > Date() else {
+    func loadBackoffUntil(for providerID: String) -> Date? {
+        let key = backoffKey(for: providerID)
+        guard let date = defaults.object(forKey: key) as? Date, date > Date() else {
             return nil
         }
         return date
     }
 
-    func saveBackoffUntil(_ date: Date?) {
+    func saveBackoffUntil(_ date: Date?, for providerID: String) {
+        let key = backoffKey(for: providerID)
         if let date {
-            defaults.set(date, forKey: backoffKey)
+            defaults.set(date, forKey: key)
         } else {
-            defaults.removeObject(forKey: backoffKey)
+            defaults.removeObject(forKey: key)
         }
     }
 
@@ -60,7 +72,9 @@ struct UsageArchive {
                 glyph: entry.glyph,
                 fidelity: entry.fidelity,
                 status: .stale(since: entry.fetchedAt),
-                windows: entry.windows
+                windows: entry.windows,
+                kind: entry.kind ?? ProviderKind(rawValue: entry.id) ?? .other,
+                accountLabel: entry.accountLabel
             )
             result[entry.id] = (snapshot, entry.fetchedAt)
         }
@@ -75,7 +89,9 @@ struct UsageArchive {
                 glyph: $0.snapshot.glyph,
                 fidelity: $0.snapshot.fidelity,
                 windows: $0.snapshot.windows,
-                fetchedAt: $0.fetchedAt
+                fetchedAt: $0.fetchedAt,
+                kind: $0.snapshot.kind,
+                accountLabel: $0.snapshot.accountLabel
             )
         }
         guard let data = try? JSONEncoder().encode(entries) else { return }
