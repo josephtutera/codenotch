@@ -88,7 +88,8 @@ names it and picks its folder, and the row it adds shows the one command to run
 in a terminal to sign that folder in. Codenotch still signs in to nothing; it
 just knows more than one place to borrow from. Each account is its own ring,
 named the way you named it, with the address it is signed in as under the
-tooltip's title so two rings of one glyph can be told apart.
+tooltip's title — and the organisation, where two accounts share an address —
+so two rings of one glyph can be told apart.
 
 Two things follow from the credential belonging to the tool. A Claude account's
 token is refreshed only by the copy of Claude Code that owns it, so an account

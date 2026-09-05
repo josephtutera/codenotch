@@ -173,10 +173,30 @@ enum ClaudeProfile {
     }
 
     static func emailAddress(in file: URL) -> String? {
+        account(in: file)?["emailAddress"] as? String
+    }
+
+    /// The address, and the organisation where that says something the
+    /// address does not.
+    ///
+    /// One person's Team and Max accounts share an address — that is what
+    /// made two Claude rings read identically — and differ by organisation:
+    /// "CarePilot" against "joseph@…'s Organization". The personal one is
+    /// named after its address, so it adds nothing and is left off.
+    static func label(in file: URL) -> String? {
+        guard let account = account(in: file),
+              let email = account["emailAddress"] as? String else { return nil }
+        guard let organization = account["organizationName"] as? String,
+              !organization.isEmpty,
+              !organization.localizedCaseInsensitiveContains(email)
+        else { return email }
+        return "\(email) · \(organization)"
+    }
+
+    private static func account(in file: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: file),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let account = root["oauthAccount"] as? [String: Any]
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
-        return account["emailAddress"] as? String
+        return root["oauthAccount"] as? [String: Any]
     }
 }

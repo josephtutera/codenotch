@@ -127,7 +127,22 @@ final class ClaudeKeychainServiceTests: XCTestCase {
             .write(to: file)
         defer { try? FileManager.default.removeItem(at: file) }
         XCTAssertEqual(ClaudeProfile.emailAddress(in: file), "max@example.com")
+        XCTAssertEqual(ClaudeProfile.label(in: file), "max@example.com · Org")
         XCTAssertNil(ClaudeProfile.emailAddress(in: file.appendingPathExtension("missing")))
+    }
+
+    /// Team and Max on one address differ only by organisation, and the
+    /// personal organisation is named after the address, so it adds nothing.
+    func testThePersonalOrganisationIsLeftOffTheLabel() throws {
+        let file = FileManager.default.temporaryDirectory
+            .appendingPathComponent("profile-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: file) }
+        try Data(#"{"oauthAccount":{"emailAddress":"me@example.com","organizationName":"me@example.com's Organization"}}"#.utf8)
+            .write(to: file)
+        XCTAssertEqual(ClaudeProfile.label(in: file), "me@example.com")
+
+        try Data(#"{"oauthAccount":{"emailAddress":"me@example.com"}}"#.utf8).write(to: file)
+        XCTAssertEqual(ClaudeProfile.label(in: file), "me@example.com", "no organisation at all is fine")
     }
 
     /// The fallback file Claude Code writes when the keychain refuses has the

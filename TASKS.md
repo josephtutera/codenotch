@@ -1462,7 +1462,11 @@ and Codenotch still signs in to nothing.
 - [x] The address comes from the profile beside the settings — `~/.claude.json`
       for the default, `<dir>/.claude.json` for the rest — because the
       credential carries none, and with two Claude rings the address is what
-      says which is which.
+      says which is which. Where two accounts share an address — one person's
+      Team and Max — the organisation is added, unless it is the personal one
+      named after the address. Verified on a real second login: the keychain
+      item for `~/.claude-team` is `…-fdd39ca7`, as computed, and the profile
+      is at `~/.claude-team/.claude.json`.
 - [x] `CodexLocalProvider` takes a home. The app server is spawned with
       `CODEX_HOME` set — always, the default included, so the reading and the
       label can never come from two different `auth.json`s. Rollout, thread

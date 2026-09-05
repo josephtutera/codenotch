@@ -217,7 +217,7 @@ actor ClaudeOAuthProvider: UsageProvider {
     /// The address this copy of Claude Code is signed in as. The credential
     /// carries none; the profile beside it does.
     private nonisolated var emailAddress: String? {
-        ClaudeProfile.emailAddress(in: ClaudeProfile.file(directory: configured.directory))
+        ClaudeProfile.label(in: ClaudeProfile.file(directory: configured.directory))
     }
 
     private static let decoder: JSONDecoder = {
