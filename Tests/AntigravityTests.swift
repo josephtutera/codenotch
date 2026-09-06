@@ -601,9 +601,20 @@ final class AntigravityFallbackTests: XCTestCase {
         let status = UsageStore.statusForTesting(UsageProviderError.credentialExpired)
         XCTAssertFalse(UsageStore.supersedesHistory(status),
                        "a restarted Antigravity would wipe the percentage")
-        guard case .stale = status else {
-            return XCTFail("expected a stale status, got \(status)")
-        }
+        XCTAssertTrue(status.isStale, "expected the reading kept and dimmed, got \(status)")
+    }
+
+    /// Antigravity raises `credentialExpired` for a bridge that has gone away,
+    /// not for a login that has run out, so it must not inherit Claude's note
+    /// about signing in again — that would send someone to fix the wrong thing.
+    func testTheAwayStateSaysNothingAboutALogin() {
+        let snapshot = ProviderSnapshot(
+            id: "gemini", displayName: "Antigravity", glyph: .antigravity,
+            fidelity: .derived, status: .loginExpired(since: Date()),
+            windows: [LimitWindow(id: "requests", label: "Requests", used: 12)],
+            kind: .antigravity
+        )
+        XCTAssertNil(snapshot.frozenNote)
     }
 
     /// The distinction that matters: never having connected is a different

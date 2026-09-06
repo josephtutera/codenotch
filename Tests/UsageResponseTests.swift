@@ -268,9 +268,8 @@ final class BackoffPersistenceTests: XCTestCase {
 /// longer read.
 final class SupersedingStatusTests: XCTestCase {
     @MainActor
-    func testSignedOutAndUnmeteredDropTheRememberedReading() {
+    func testBeingSignedOutDropsTheRememberedReading() {
         XCTAssertTrue(UsageStore.supersedesHistory(.needsAuth))
-        XCTAssertTrue(UsageStore.supersedesHistory(.unsupported("free plan")))
     }
 
     /// A network blip or a rate limit does not make yesterday's number false.
@@ -279,6 +278,27 @@ final class SupersedingStatusTests: XCTestCase {
         XCTAssertFalse(UsageStore.supersedesHistory(.error("HTTP 500")))
         XCTAssertFalse(UsageStore.supersedesHistory(.stale(since: Date())))
         XCTAssertFalse(UsageStore.supersedesHistory(.ok))
+    }
+
+    /// An expired login is the one staleness with a cause worth naming, and it
+    /// must not throw the reading away — the number was true when it was taken.
+    @MainActor
+    func testAnExpiredLoginKeepsTheRememberedReading() {
+        let status = UsageStore.statusForTesting(UsageProviderError.credentialExpired)
+        XCTAssertFalse(UsageStore.supersedesHistory(status))
+        XCTAssertTrue(status.isStale, "the ring has to dim, whatever the cause")
+    }
+
+    /// The reported failure: Codex answers `nothingMetered` whenever its app
+    /// server is not up *and* the rollout log has nothing yet, which is a race
+    /// at launch and not a fact about the plan. Dropping the reading blanked a
+    /// ring that had a number a second earlier.
+    @MainActor
+    func testNothingMeteredKeepsTheRememberedReading() {
+        XCTAssertFalse(
+            UsageStore.supersedesHistory(.unsupported("No Codex threads on this machine yet")),
+            "a transient 'nothing to meter' threw away the last good reading"
+        )
     }
 }
 
@@ -313,6 +333,36 @@ final class ResetWindowTests: XCTestCase {
         let windows = try decode(json).limitWindows()
         XCTAssertEqual(windows.map(\.id), ["session", "weekly_all"])
         XCTAssertEqual(windows[0].usedFraction ?? -1, 0, accuracy: 0.0001)
+    }
+
+    /// The reported failure: at a five-hour rollover the session leaves
+    /// `limits` and `five_hour` goes null in the same answer, and the ring —
+    /// whose declared headline is the session — blanked to a dash while the
+    /// tooltip still held the weekly numbers. Absent here means the window
+    /// restarted, which is 0% spent.
+    func testSessionRollsOverToZeroRatherThanBlanking() throws {
+        let json = """
+        { "five_hour": null,
+          "seven_day": { "utilization": 36.0, "resets_at": "2026-09-08T16:00:00.178503+00:00" },
+          "limits": [ { "kind": "weekly_all", "percent": 36,
+                        "resets_at": "2026-09-08T16:00:00.178503+00:00" } ] }
+        """
+        let windows = try decode(json).limitWindows()
+        XCTAssertEqual(windows.map(\.id), ["session", "weekly_all"])
+        XCTAssertEqual(windows[0].usedFraction ?? -1, 0, accuracy: 0.0001)
+        XCTAssertNil(windows[0].resetsAt, "the old reset has passed and the answer gives no new one")
+
+        let snapshot = ProviderSnapshot(
+            id: "claude", displayName: "Claude", glyph: .claude,
+            fidelity: .official, status: .ok, windows: windows, headlineID: "session"
+        )
+        XCTAssertEqual(snapshot.headlineText, "0%")
+    }
+
+    /// An answer that meters nothing at all stays empty. Synthesising a session
+    /// for it would put a confident 0% on a ring with no reading behind it.
+    func testAnEmptyAnswerGainsNoSession() throws {
+        XCTAssertTrue(try decode("{ \"limits\": [] }").limitWindows().isEmpty)
     }
 
     /// `limits` still wins where it has the window — it carries more detail.

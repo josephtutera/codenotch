@@ -33,6 +33,40 @@ settings:
     ENABLE_HARDENED_RUNTIME: "YES"
     ENABLE_APP_SANDBOX: "NO"
     ENABLE_USER_SCRIPT_SANDBOXING: "NO"
+  configs:
+    # The release identity above belongs to the account that ships this app,
+    # and a fork has no way to hold it. Without one, a local build falls back
+    # to ad-hoc — which is precisely the case the comment above warns about:
+    # an ad-hoc signature's designated requirement is the binary's own cdhash,
+    # so every rebuild is a different app to the keychain and the access prompt
+    # comes back. Five stacked-up cdhash entries on one Claude Code item is
+    # what that looks like after a day of `make run`.
+    #
+    # Any real certificate fixes it, because the requirement then keys on the
+    # leaf rather than the hash — verified with `codesign -d -r-` across two
+    # different binaries. A self-signed one is enough: nothing outside this Mac
+    # ever has to trust a Debug build. Create it once, and every build after it
+    # inherits the same grant:
+    #
+    #   Keychain Access -> Certificate Assistant -> Create a Certificate…
+    #     Name: Codenotch Local Signing
+    #     Identity Type: Self Signed Root
+    #     Certificate Type: Code Signing
+    #
+    # Release still signs with the Developer ID above, so this changes nothing
+    # about what ships.
+    Debug:
+      CODE_SIGN_IDENTITY: "Codenotch Local Signing"
+      DEVELOPMENT_TEAM: ""
+      # Off here, on for Release. The hardened runtime enforces library
+      # validation, which means only code signed by the *same* team may be
+      # loaded — and XCTest injects its bundle into the app to run at all, so
+      # every test aborted with SIGABRT before it could connect. Nothing this
+      # app needs is affected: the keychain read and the SQLite reads are
+      # ordinary, and the designated requirement the keychain remembers is the
+      # identifier and the leaf, which this flag does not touch. Release still
+      # hardens, because notarization requires it.
+      ENABLE_HARDENED_RUNTIME: "NO"
 
 packages:
   Sparkle:

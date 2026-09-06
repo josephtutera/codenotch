@@ -274,6 +274,30 @@ struct UsageResponse: Decodable {
         merge(fiveHour, id: "session", label: "Current session")
         merge(sevenDay, id: "weekly_all", label: "All models")
 
+        // A session window absent from both places has rolled over: the schema
+        // drops it once `resets_at` has passed, and `five_hour` is null in the
+        // same breath. Nothing has been spent in the window that replaced it,
+        // so the reading is 0% — which is what Claude Code's own `/usage` says
+        // in this state, and the ring is the one thing on screen that has to
+        // agree with it.
+        //
+        // Without this the notch blanked to a dash for the minutes either side
+        // of every five-hour rollover, holding perfectly good weekly numbers
+        // behind an empty ring, because "session" is the declared headline and
+        // `ProviderSnapshot.headline` will not promote another window into its
+        // place. The honest fix is to report the window, not to change what the
+        // ring means. No reset date: the old one has passed and the response
+        // does not say when the new one ends.
+        //
+        // Only where the response metered *something*. An answer carrying no
+        // windows at all is a plan that meters nothing, and inventing a 0% for
+        // it would put a confident number on a ring that has no reading behind
+        // it — the one thing this app does not do.
+        if !windows.isEmpty, !windows.contains(where: { $0.id == "session" }) {
+            windows.append(LimitWindow(id: "session", label: "Current session",
+                                       usedFraction: 0))
+        }
+
         return windows.sorted(by: UsageResponse.displayOrder)
     }
 

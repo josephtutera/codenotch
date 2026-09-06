@@ -266,6 +266,7 @@ enum NotchLayout {
     static func cardHeight(windowCount: Int,
                            statusMessage: String? = nil,
                            blockMessage: String? = nil,
+                           note: String? = nil,
                            accountLine: Bool = false) -> CGFloat {
         let header = max(glyphSize, cardTitleLineHeight)
         var height = 2 * cardPadding + header
@@ -281,6 +282,13 @@ enum NotchLayout {
         // is the reading that stops you working, so it leads.
         if let blockMessage {
             height += headerToBlock + bodyTextHeight(blockMessage)
+        }
+
+        // Why the numbers below have stopped moving. Unlike the status message
+        // it sits *with* the rows rather than in place of them, so its height
+        // is owed whatever the window count.
+        if let note {
+            height += headerToBlock + bodyTextHeight(note)
         }
 
         if windowCount > 0 {
@@ -335,7 +343,29 @@ enum NotchLayout {
     /// sized once for the whole stack, so one provider that can name its
     /// account costs every card the line's height in budget.
     static func maxCardHeight(accountLine: Bool = false) -> CGFloat {
-        cardHeight(windowCount: maxWindowCount, accountLine: accountLine)
+        // The frozen-login note is budgeted for unconditionally. It appears on
+        // a card that already has its full set of rows, so it is the tallest
+        // card there is, and a panel sized without it clips the last row the
+        // first time a token runs out — which is the one moment the note is
+        // there to be read. Reserving it costs nothing: the panel is
+        // transparent and passes clicks through everywhere the chrome is not.
+        cardHeight(windowCount: maxWindowCount,
+                   note: ProviderSnapshot.expiredLoginNote,
+                   accountLine: accountLine)
+    }
+
+    /// The height of the card for one snapshot.
+    ///
+    /// Three places need this figure — what is drawn, the hover region, and
+    /// where the card is centred — and they have to agree or the card is
+    /// somewhere the pointer is not. They ask the same question rather than
+    /// each assembling the same arguments.
+    static func cardHeight(for snapshot: ProviderSnapshot, now: Date) -> CGFloat {
+        cardHeight(windowCount: snapshot.windows.count,
+                   statusMessage: snapshot.statusMessage,
+                   blockMessage: snapshot.block?.summary(now: now),
+                   note: snapshot.frozenNote,
+                   accountLine: snapshot.accountLabel != nil)
     }
 
     static let defaultMaxCardHeight = maxCardHeight()
