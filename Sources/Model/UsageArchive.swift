@@ -22,10 +22,10 @@ struct UsageArchive {
 
     private let defaults: UserDefaults
     private let key = "lastGoodReadings"
-    /// One key per provider. Two Claude accounts are two tokens with two
-    /// rate-limit buckets, and one penalty must not silence the other. The
-    /// default Claude account keeps the key its penalty was first stored
-    /// under, so an update mid-penalty still waits it out.
+    /// One key per bucket, which is not the same as one key per account:
+    /// every Claude account shares a penalty under `claude`, because the
+    /// endpoint refuses them together (see `ClaudeRateLimit`). That is the key
+    /// the single-account build wrote, so an update mid-penalty waits it out.
     private func backoffKey(for providerID: String) -> String {
         providerID == "claude" ? "backoffUntil" : "backoffUntil.\(providerID)"
     }
@@ -74,7 +74,8 @@ struct UsageArchive {
                 status: .stale(since: entry.fetchedAt),
                 windows: entry.windows,
                 kind: entry.kind ?? ProviderKind(rawValue: entry.id) ?? .other,
-                accountLabel: entry.accountLabel
+                accountLabel: entry.accountLabel,
+                fetchedAt: entry.fetchedAt
             )
             result[entry.id] = (snapshot, entry.fetchedAt)
         }

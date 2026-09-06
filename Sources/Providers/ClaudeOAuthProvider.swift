@@ -10,8 +10,9 @@ import os
 ///
 /// One instance per account. Each is a separately signed-in copy of Claude
 /// Code — its own configuration directory, its own keychain item, its own
-/// token — so two accounts on one Mac are two of these reading two items,
-/// with nothing shared but the endpoint.
+/// token — so two accounts on one Mac are two of these reading two items.
+/// What they do share is the endpoint, and therefore its rate limit: see
+/// `ClaudeRateLimit`.
 actor ClaudeOAuthProvider: UsageProvider {
     nonisolated let id: String
     nonisolated let displayName: String
@@ -31,42 +32,31 @@ actor ClaudeOAuthProvider: UsageProvider {
     /// every refresh tick would raise the dialog again.
     private var lastAuthFailure: Date?
     private let authRetryDelay: TimeInterval = 5 * 60
-    /// Set when the endpoint returns 429. Until it passes, refreshes are
-    /// skipped without touching the network — a poll that keeps firing into a
-    /// rate limit is how you stay rate limited.
-    private var retryNoEarlierThan: Date?
-    /// How many 429s in a row. The endpoint answers `Retry-After: 0`, which is
-    /// no guidance at all, so the wait doubles each time instead.
-    private var consecutiveRateLimits = 0
-
-    private let archive: UsageArchive
+    /// The 429 penalty, shared with every other Claude account: until it
+    /// passes, refreshes are skipped without touching the network — a poll that
+    /// keeps firing into a rate limit is how you stay rate limited.
+    private let rateLimit: ClaudeRateLimit
 
     init(account: ConfiguredAccount = .defaultClaude,
          session: URLSession = .shared,
-         archive: UsageArchive = UsageArchive()) {
+         rateLimit: ClaudeRateLimit = .shared) {
         self.id = account.id
         self.displayName = account.displayName
         self.configured = account
         self.credentialStore = ClaudeCredentialStore(directory: account.directory)
         self.session = session
-        self.archive = archive
-        // Pick the back-off back up where the last run left it, so relaunching
-        // during a penalty does not spend an attempt extending it.
-        self.retryNoEarlierThan = archive.loadBackoffUntil(for: account.id)
+        self.rateLimit = rateLimit
     }
 
     func fetchSnapshot() async throws -> ProviderSnapshot {
-        if let retryNoEarlierThan, retryNoEarlierThan > Date() {
-            let remaining = retryNoEarlierThan.timeIntervalSinceNow
+        if let remaining = await rateLimit.remaining() {
             Log.usage.debug("\(self.id, privacy: .public): skipping fetch, backing off for \(remaining, format: .fixed(precision: 0))s")
             throw UsageProviderError.rateLimited(retryAfter: remaining)
         }
         do {
             let snapshot = try await fetch(retryingOnUnauthorized: true)
             lastAuthFailure = nil
-            retryNoEarlierThan = nil
-            consecutiveRateLimits = 0
-            archive.saveBackoffUntil(nil, for: id)
+            await rateLimit.clear()
             return snapshot
         } catch UsageProviderError.needsAuth {
             credentials = nil
@@ -77,10 +67,8 @@ actor ClaudeOAuthProvider: UsageProvider {
             throw UsageProviderError.credentialExpired
         } catch let error as UsageProviderError {
             if case .rateLimited(let retryAfter) = error {
-                consecutiveRateLimits += 1
-                retryNoEarlierThan = Date().addingTimeInterval(retryAfter)
-                archive.saveBackoffUntil(retryNoEarlierThan, for: id)
-                Log.usage.notice("\(self.id, privacy: .public): rate limited (\(self.consecutiveRateLimits)x), next attempt in \(retryAfter, format: .fixed(precision: 0))s")
+                let attempt = await rateLimit.penalise(retryAfter: retryAfter)
+                Log.usage.notice("\(self.id, privacy: .public): rate limited (\(attempt)x, every Claude account waits), next attempt in \(retryAfter, format: .fixed(precision: 0))s")
             }
             throw error
         }
@@ -112,11 +100,10 @@ actor ClaudeOAuthProvider: UsageProvider {
             throw UsageProviderError.needsAuth
         }
         if status == 429 {
+            let attempt = await rateLimit.attempt
             throw UsageProviderError.rateLimited(
-                retryAfter: Self.backoff(
-                    forAttempt: consecutiveRateLimits,
-                    retryAfter: Self.retryAfter(from: response)
-                )
+                retryAfter: Self.backoff(forAttempt: attempt,
+                                         retryAfter: Self.retryAfter(from: response))
             )
         }
         guard (200..<300).contains(status) else {

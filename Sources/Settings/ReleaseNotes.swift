@@ -43,16 +43,30 @@ enum ReleaseNotes {
                           + "windows are untouched."
                 ),
                 ReleaseNote.Change(
-                    title: "Usage is read every 30 seconds",
-                    detail: "It used to drop to every five minutes when nothing "
-                          + "local was running. With nothing local to watch, "
+                    title: "Usage is read every minute",
+                    detail: "It used to drop to every five when nothing was "
+                          + "running on this Mac. With nothing local to watch, "
                           + "the numbers are simply kept current."
                 ),
                 ReleaseNote.Change(
                     title: "Reaching for the notch refetches",
                     detail: "So the number you open it to read is the current "
-                          + "one, not one from up to half a minute ago. Opening "
-                          + "it again within 15 seconds costs nothing."
+                          + "one rather than one from a minute ago. Opening it "
+                          + "again within 15 seconds costs nothing."
+                ),
+                ReleaseNote.Change(
+                    title: "Two Claude accounts stop rate-limiting each other",
+                    detail: "Polled a second apart, both were refused at once — "
+                          + "and each one's penalty was re-tripped by the other "
+                          + "still asking, so the rings sat dimmed on old "
+                          + "numbers. They now share one wait, and ask five "
+                          + "seconds apart."
+                ),
+                ReleaseNote.Change(
+                    title: "Every card says how old its reading is",
+                    detail: "On the title line, always — not only once it has "
+                          + "gone dim. A number with no age on it is read as "
+                          + "live, and after a rate limit it may be minutes old."
                 )
             ]
         ),

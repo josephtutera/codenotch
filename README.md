@@ -40,7 +40,7 @@ nothing installs that was not built here.
 
 The notch is built, matches the design frame, and shows **your real Claude
 usage** — the same session and weekly percentages Claude's own usage panel
-reports, refreshed every 30 seconds. `make run` puts it on screen, hover pops the
+reports, refreshed every minute. `make run` puts it on screen, hover pops the
 detail card.
 
 Cursor and Codex are wired up too, both reading locally: Cursor borrows the
@@ -118,11 +118,17 @@ only — 60s, doubling per consecutive 429, capped at 15 minutes. The last good
 reading is kept across launches, so a refused fetch shows dated numbers rather
 than nothing; the ring dims and the tooltip header says how old they are. The
 back-off deadline is persisted too, so relaunching during a penalty waits instead
-of spending an attempt on it. Polling runs every 30 seconds, and reaching for
-the notch refetches on the spot — at most once every 15 seconds, because the
-notch unfolds whenever the pointer brushes the bezel. Clicking a ring refetches
-that provider alone, and right-clicking the notch offers **Refresh now** for all
-of them.
+of spending an attempt on it. Every Claude account shares one penalty, because
+the endpoint refuses them together — kept per account, each one's wait was
+re-tripped by its sibling still polling — and two accounts of one tool are asked
+five seconds apart rather than back to back.
+
+Polling runs every minute, and reaching for the notch refetches on the spot — at
+most once every 15 seconds, because the notch unfolds whenever the pointer
+brushes the bezel. Clicking a ring refetches that provider alone, and
+right-clicking the notch offers **Refresh now** for all of them. Every card says
+how old its reading is, on the title line, so a number is never taken for live
+when it is minutes old.
 
 **Logs:** the app is an agent with no window, so anything worth diagnosing goes to
 the unified log.

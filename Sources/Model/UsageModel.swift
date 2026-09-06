@@ -125,6 +125,11 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// With two accounts of one tool on the notch, this is what tells the
     /// rings apart.
     var accountLabel: String?
+    /// When this reading was taken. The card says so on its title line —
+    /// always, not only once it has gone stale: a number with no age on it is
+    /// read as live, and after a rate limit it can be minutes old while the
+    /// ring still looks perfectly healthy.
+    var fetchedAt: Date?
 
     /// The number on the cell: the provider's declared primary window — for
     /// Claude, the current session.

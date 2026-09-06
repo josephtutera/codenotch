@@ -21,7 +21,9 @@ final class TooltipRenderTests: XCTestCase {
                             resetsAt: now.addingTimeInterval(3 * 24 * 3600)),
                 LimitWindow(id: "opus", label: "Scoped", usedFraction: 0.15,
                             resetsAt: now.addingTimeInterval(3 * 24 * 3600))
-            ]
+            ],
+            accountLabel: "joseph@carepilot.com · CarePilot",
+            fetchedAt: now.addingTimeInterval(-2 * 60)
         )
 
         let view = TooltipCard(snapshot: snapshot, now: now)

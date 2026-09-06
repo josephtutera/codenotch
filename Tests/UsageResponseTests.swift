@@ -177,6 +177,17 @@ final class UsageArchiveTests: XCTestCase {
         XCTAssertEqual(restored?.fetchedAt, taken)
     }
 
+    /// The card dates every reading, so the fetch time has to survive the
+    /// archive as well as the process it was taken in.
+    func testTheSnapshotCarriesTheFetchTime() throws {
+        let defaults = makeDefaults()
+        let taken = Date(timeIntervalSince1970: 1_787_900_000)
+        UsageArchive(defaults: defaults).save(["claude": (reading, taken)])
+
+        let restored = try XCTUnwrap(UsageArchive(defaults: defaults).load()["claude"])
+        XCTAssertEqual(restored.snapshot.fetchedAt, taken)
+    }
+
     /// A restored reading is never presented as live.
     func testRestoredReadingsComeBackStale() throws {
         let defaults = makeDefaults()
@@ -409,6 +420,107 @@ final class SingleProviderRefreshTests: XCTestCase {
         let store = store([CountingProvider(id: "a")])
         store.refresh(providerID: "nope")
         XCTAssertTrue(store.refreshing.isEmpty)
+    }
+}
+
+/// The endpoint refuses both Claude accounts together — the log has them taking
+/// a 429 in the same millisecond — so the penalty is one penalty. Kept per
+/// account, each one's wait was re-tripped by its sibling still polling: 60s,
+/// 120, 240, 480, with both rings dimmed the whole way.
+final class ClaudeRateLimitTests: XCTestCase {
+    private func limiter() -> ClaudeRateLimit {
+        ClaudeRateLimit(archive: UsageArchive(defaults: makeSuite()))
+    }
+
+    private func makeSuite() -> UserDefaults {
+        let name = "ClaudeRateLimitTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    func testARefusalForOneAccountHoldsTheOthers() async throws {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        let remaining = await limit.remaining()
+        XCTAssertEqual(try XCTUnwrap(remaining), 60, accuracy: 1,
+                       "the other account was let straight back into the same limit")
+    }
+
+    /// Two accounts refused in the same second: the second refusal must not
+    /// shorten the wait the first one set.
+    func testASecondRefusalNeverShortensTheWait() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 480)
+        _ = await limit.penalise(retryAfter: 60)
+        let remaining = await limit.remaining() ?? 0
+        XCTAssertGreaterThan(remaining, 400)
+    }
+
+    /// A reading getting through means the window has room again — for every
+    /// account, since they share it.
+    func testAReadingGettingThroughClearsItForEveryone() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        await limit.clear()
+        let remaining = await limit.remaining()
+        XCTAssertNil(remaining)
+    }
+
+    /// And the doubling starts over, or it escalates for ever.
+    func testClearingResetsTheDoubling() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        await limit.clear()
+        let attempt = await limit.attempt
+        XCTAssertEqual(attempt, 0)
+    }
+
+    /// Every refusal counts towards the wait, whichever account took it.
+    func testTheDoublingCountsRefusalsFromEveryAccount() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        let second = await limit.penalise(retryAfter: 60)
+        XCTAssertEqual(second, 2)
+    }
+
+    /// It outlives a relaunch, or the first tick after one walks straight back
+    /// into the limit it is being punished by.
+    func testThePenaltySurvivesARelaunch() async {
+        let archive = UsageArchive(defaults: makeSuite())
+        _ = await ClaudeRateLimit(archive: archive).penalise(retryAfter: 300)
+        let afterRelaunch = await ClaudeRateLimit(archive: archive).remaining()
+        XCTAssertNotNil(afterRelaunch)
+    }
+}
+
+/// Every card dates its reading, so every reading has to carry the time it was
+/// taken — a number with no age on it is read as live.
+@MainActor
+final class ReadingAgeTests: XCTestCase {
+    private final class StubProvider: UsageProvider, @unchecked Sendable {
+        let id = "claude"
+        let displayName = "Claude"
+        let glyph = ProviderGlyph.claude
+        func signOut() async {}
+        func fetchSnapshot() async throws -> ProviderSnapshot {
+            ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
+                             fidelity: .official, status: .ok,
+                             windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)])
+        }
+    }
+
+    func testAFreshReadingIsStampedWithWhenItWasTaken() async throws {
+        let name = "ReadingAgeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        let store = UsageStore(providers: [StubProvider()],
+                               archive: UsageArchive(defaults: defaults))
+
+        await store.refresh()
+
+        let taken = try XCTUnwrap(store.snapshots.first?.fetchedAt)
+        XCTAssertEqual(taken.timeIntervalSinceNow, 0, accuracy: 5)
     }
 }
 

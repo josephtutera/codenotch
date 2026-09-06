@@ -197,13 +197,16 @@ private struct ProviderTooltip: View {
     let snapshot: ProviderSnapshot
     let now: Date
 
-    /// Only worth saying when the numbers are not current. A remembered reading
-    /// has to be dated, or it quietly passes itself off as live.
+    /// When this reading was taken, said on every card rather than only on a
+    /// dimmed one. A number with no age on it is read as live, and between the
+    /// refresh interval and a rate-limit penalty it can be several minutes old
+    /// while the ring looks perfectly healthy.
     private var readingAge: String? {
-        guard snapshot.hasReading, let since = snapshot.status.staleSince,
-              since != .distantPast
+        guard snapshot.hasReading else { return nil }
+        guard let taken = snapshot.fetchedAt ?? snapshot.status.staleSince,
+              taken != .distantPast
         else { return nil }
-        return ElapsedCopy.ago(since: since, now: now)
+        return ElapsedCopy.ago(since: taken, now: now)
     }
 
     var body: some View {

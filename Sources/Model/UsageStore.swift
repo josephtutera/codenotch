@@ -31,10 +31,11 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// How often to look. The floor is not politeness: every tick is an HTTPS
-    /// call per Claude account against an endpoint that answers 429 and then
-    /// backs off for minutes, plus a spawned `codex app-server` per Codex
-    /// account. Half a minute is as fast as that is worth paying for.
+    /// How often to look, and it is measured rather than chosen: at one call
+    /// per Claude account per minute this Mac already collects 429s, each
+    /// costing a penalty of 60s doubling to 8 minutes. Polling faster buys
+    /// fewer readings, not more. Reaching for the notch refetches on demand —
+    /// see `refreshIfStale` — which is where freshness actually comes from.
     private let refreshInterval: TimeInterval
     /// How long a snapshot stays believable after its last successful fetch.
     private let staleAfter: TimeInterval
@@ -54,7 +55,7 @@ final class UsageStore: ObservableObject {
 
     init(
         providers: [UsageProvider],
-        refreshInterval: TimeInterval = 30,
+        refreshInterval: TimeInterval = 60,
         staleAfter: TimeInterval = 5 * 60,
         archive: UsageArchive = UsageArchive(),
         disconnected: Set<String> = []
@@ -161,6 +162,10 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// How long the second account of one tool waits before asking, so the two
+    /// are not inside one rate-limit window.
+    static let accountStagger: TimeInterval = 5
+
     /// How long a reading stays fresh enough that reaching for the notch is not
     /// worth a request. Well under the refresh interval, so unfolding still
     /// buys you a newer number than the timer would have.
@@ -201,7 +206,18 @@ final class UsageStore: ObservableObject {
         refreshing = Set(live.map(\.id))
         defer { refreshing = [] }
         var next: [ProviderSnapshot] = []
+        var previousKind: ProviderKind?
         for provider in live {
+            // Two accounts of one tool are two requests to one endpoint. Sent
+            // back to back they are refused together — the log shows both
+            // Claude accounts taking a 429 in the same millisecond — so the
+            // second one waits a moment rather than arriving inside the first
+            // one's window. `.other` is a provider whose tool we cannot name,
+            // and two of those share nothing worth waiting for.
+            if provider.kind != .other, provider.kind == previousKind {
+                try? await Task.sleep(nanoseconds: UInt64(Self.accountStagger * 1_000_000_000))
+            }
+            previousKind = provider.kind
             next.append(await snapshot(from: provider))
         }
         // Superseded mid-flight by `replaceProviders`: these are the old
@@ -321,8 +337,10 @@ final class UsageStore: ObservableObject {
 
     private func snapshot(from provider: UsageProvider) async -> ProviderSnapshot {
         do {
-            let fresh = try await provider.fetchSnapshot()
-            lastGood[provider.id] = (fresh, Date())
+            var fresh = try await provider.fetchSnapshot()
+            let taken = Date()
+            fresh.fetchedAt = taken
+            lastGood[provider.id] = (fresh, taken)
             archive.save(lastGood)
             Log.usage.debug("\(provider.id, privacy: .public): \(fresh.windows.count) window(s)")
             return fresh

@@ -336,7 +336,7 @@ now happens in a remote session it could not see — so the list read "idle" whi
 the agent was working. The notch is back to one fact per ring: how much of the
 limit is gone. Nothing about the usage readings depended on it, except the
 polling cadence, which no longer backs off to 5 minutes when nothing local is
-running: it is every 30 seconds, always.
+running: it is every 60 seconds, always.
 
 ### The floating notch
 
