@@ -367,28 +367,16 @@ final class ProviderKindTests: XCTestCase {
     }
 }
 
-/// Two Claude accounts are two tokens with two rate-limit buckets.
-final class BackoffPerAccountTests: XCTestCase {
-    private func makeDefaults() -> UserDefaults {
-        let name = "BackoffPerAccountTests.\(UUID().uuidString)"
+/// Every Claude account serves one penalty, under the key the single-account
+/// build wrote — so an update landing mid-penalty still waits it out instead of
+/// starting clean and walking back into the limit.
+final class BackoffKeyTests: XCTestCase {
+    func testThePenaltyIsReadFromTheKeyItWasAlwaysWrittenUnder() {
+        let name = "BackoffKeyTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)
-        return defaults
-    }
-
-    func testOneAccountsPenaltyDoesNotSilenceAnother() {
-        let archive = UsageArchive(defaults: makeDefaults())
-        archive.saveBackoffUntil(Date().addingTimeInterval(120), for: "claude.max")
-        XCTAssertNotNil(archive.loadBackoffUntil(for: "claude.max"))
-        XCTAssertNil(archive.loadBackoffUntil(for: "claude"))
-    }
-
-    /// The default account's penalty was stored under the old, unqualified
-    /// key; an update mid-penalty must still wait it out.
-    func testTheDefaultAccountReadsTheKeyItAlwaysHad() {
-        let defaults = makeDefaults()
         defaults.set(Date().addingTimeInterval(120), forKey: "backoffUntil")
-        XCTAssertNotNil(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        XCTAssertNotNil(UsageArchive(defaults: defaults).loadBackoffUntil())
     }
 }
 

@@ -168,8 +168,10 @@ final class UsageStore: ObservableObject {
 
     /// How long a reading stays fresh enough that reaching for the notch is not
     /// worth a request. Well under the refresh interval, so unfolding still
-    /// buys you a newer number than the timer would have.
-    static let unfoldCooldown: TimeInterval = 15
+    /// buys you a newer number than the timer would have — and no lower, since
+    /// the notch unfolds on a passing pointer and this is the ceiling on how
+    /// often that can spend the endpoint's budget.
+    static let unfoldCooldown: TimeInterval = 30
 
     /// Refetch because the notch was opened — unless it was opened a moment ago.
     ///
@@ -212,12 +214,19 @@ final class UsageStore: ObservableObject {
             // back to back they are refused together — the log shows both
             // Claude accounts taking a 429 in the same millisecond — so the
             // second one waits a moment rather than arriving inside the first
-            // one's window. `.other` is a provider whose tool we cannot name,
-            // and two of those share nothing worth waiting for.
-            if provider.kind != .other, provider.kind == previousKind {
+            // one's window. Only where there is a shared endpoint to be refused
+            // by: a second local account is a second file read, and sleeping
+            // between those buys nothing but a longer spinner.
+            if provider.kind.sharesARemoteLimit, provider.kind == previousKind {
                 try? await Task.sleep(nanoseconds: UInt64(Self.accountStagger * 1_000_000_000))
             }
             previousKind = provider.kind
+            // Checked here as well as after the loop: `Task.sleep` reports
+            // cancellation by throwing, `try?` swallows it, and a refresh
+            // superseded by `replaceProviders` would otherwise carry on
+            // fetching — writing `lastGood` and the archive for an account that
+            // has just been removed, which brings it back at the next launch.
+            guard !Task.isCancelled else { return }
             next.append(await snapshot(from: provider))
         }
         // Superseded mid-flight by `replaceProviders`: these are the old
@@ -238,6 +247,9 @@ final class UsageStore: ObservableObject {
               !refreshing.contains(providerID) else { return }
 
         refreshing.insert(providerID)
+        // A fetch is a fetch: unfolding a second later should not put another
+        // request on the endpoint this one is already asking.
+        lastAttempt = Date()
         Task { [weak self] in
             let fresh = await self?.snapshot(from: provider)
             guard let self, let fresh else { return }

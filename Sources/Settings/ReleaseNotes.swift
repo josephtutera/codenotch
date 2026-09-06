@@ -52,7 +52,7 @@ enum ReleaseNotes {
                     title: "Reaching for the notch refetches",
                     detail: "So the number you open it to read is the current "
                           + "one rather than one from a minute ago. Opening it "
-                          + "again within 15 seconds costs nothing."
+                          + "again within 30 seconds costs nothing."
                 ),
                 ReleaseNote.Change(
                     title: "Two Claude accounts stop rate-limiting each other",

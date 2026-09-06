@@ -670,11 +670,21 @@ final class PanelFitsTheScreenTests: XCTestCase {
     private let shortestDisplay: CGFloat = 900
     private let menuBar: CGFloat = 37
 
+    /// Measured with an account line on the stack, which is the taller of the
+    /// two panels and the one that ships: Claude reports an address.
     @MainActor func testTheSidePanelFitsTheShortestDisplay() {
         let model = NotchViewModel()
         model.edge = .right
+        model.snapshots = [Self.named]
+        XCTAssertTrue(model.hasAccountLine, "the taller panel is the one under test")
         XCTAssertLessThanOrEqual(model.panelSize(cellCount: 4).height, shortestDisplay)
     }
+
+    private static let named = ProviderSnapshot(
+        id: "claude", displayName: "Claude", glyph: .claude,
+        fidelity: .official, status: .ok, windows: [],
+        kind: .claude, accountLabel: "joseph@carepilot.com"
+    )
 
     /// A top or bottom notch spends the card's height reaching inward instead,
     /// against the usable screen — it starts below the menu bar, so the menu
@@ -683,6 +693,7 @@ final class PanelFitsTheScreenTests: XCTestCase {
         for edge in [NotchEdge.top, .bottom] {
             let model = NotchViewModel()
             model.edge = edge
+            model.snapshots = [Self.named]
             XCTAssertLessThanOrEqual(model.panelSize(cellCount: 4).height,
                                      shortestDisplay - menuBar, "\(edge)")
         }

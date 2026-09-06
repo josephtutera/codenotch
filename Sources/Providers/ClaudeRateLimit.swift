@@ -20,15 +20,12 @@ actor ClaudeRateLimit {
     private(set) var attempt = 0
 
     private let archive: UsageArchive
-    /// One key for every account. It is the key the single-account build wrote
-    /// its penalty under, so an update mid-penalty still waits it out.
-    private let key = "claude"
 
     init(archive: UsageArchive = UsageArchive()) {
         self.archive = archive
         // Pick the penalty up where the last run left it, or relaunching during
         // one spends an attempt extending it.
-        self.retryNoEarlierThan = archive.loadBackoffUntil(for: key)
+        self.retryNoEarlierThan = archive.loadBackoffUntil()
     }
 
     /// How much of the penalty is left, or nil when there is none to serve.
@@ -46,7 +43,7 @@ actor ClaudeRateLimit {
         attempt += 1
         let until = now.addingTimeInterval(retryAfter)
         retryNoEarlierThan = max(until, retryNoEarlierThan ?? until)
-        archive.saveBackoffUntil(retryNoEarlierThan, for: key)
+        archive.saveBackoffUntil(retryNoEarlierThan)
         return attempt
     }
 
@@ -56,6 +53,6 @@ actor ClaudeRateLimit {
         guard retryNoEarlierThan != nil || attempt > 0 else { return }
         retryNoEarlierThan = nil
         attempt = 0
-        archive.saveBackoffUntil(nil, for: key)
+        archive.saveBackoffUntil(nil)
     }
 }

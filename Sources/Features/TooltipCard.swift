@@ -119,6 +119,10 @@ private struct TooltipHeader<Mark: View>: View {
             Text(title)
                 .font(Typography.cardTitle)
                 .foregroundStyle(Palette.textPrimary)
+                // One line, always: `NotchLayout.cardHeight` reserves exactly
+                // one, and a title that wraps pushes the last row out under
+                // the card's clip.
+                .lineLimit(1)
             if let note {
                 Spacer(minLength: Design.px(20))
                 Text(note)
@@ -201,12 +205,12 @@ private struct ProviderTooltip: View {
     /// dimmed one. A number with no age on it is read as live, and between the
     /// refresh interval and a rate-limit penalty it can be several minutes old
     /// while the ring looks perfectly healthy.
+    ///
+    /// Dated by `readingTakenAt` rather than by when the fetch returned:
+    /// saying "just now" beside a ring dimmed for being stale says two opposite
+    /// things at once, and the wrong one is the one in words.
     private var readingAge: String? {
-        guard snapshot.hasReading else { return nil }
-        guard let taken = snapshot.fetchedAt ?? snapshot.status.staleSince,
-              taken != .distantPast
-        else { return nil }
-        return ElapsedCopy.ago(since: taken, now: now)
+        snapshot.readingTakenAt.map { ElapsedCopy.ago(since: $0, now: now) }
     }
 
     var body: some View {

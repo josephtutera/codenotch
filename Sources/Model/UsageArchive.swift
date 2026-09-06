@@ -22,13 +22,10 @@ struct UsageArchive {
 
     private let defaults: UserDefaults
     private let key = "lastGoodReadings"
-    /// One key per bucket, which is not the same as one key per account:
-    /// every Claude account shares a penalty under `claude`, because the
-    /// endpoint refuses them together (see `ClaudeRateLimit`). That is the key
-    /// the single-account build wrote, so an update mid-penalty waits it out.
-    private func backoffKey(for providerID: String) -> String {
-        providerID == "claude" ? "backoffUntil" : "backoffUntil.\(providerID)"
-    }
+    /// One key for every Claude account, because the endpoint refuses them
+    /// together (see `ClaudeRateLimit`). It is also the key the single-account
+    /// build wrote, so an update mid-penalty still waits the penalty out.
+    private let backoffKey = "backoffUntil"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -42,20 +39,18 @@ struct UsageArchive {
     /// request immediately — so a development loop of `make run` walks straight
     /// into the rate limit it is being punished by, and keeps the punishment
     /// alive. Which is exactly what happened.
-    func loadBackoffUntil(for providerID: String) -> Date? {
-        let key = backoffKey(for: providerID)
-        guard let date = defaults.object(forKey: key) as? Date, date > Date() else {
+    func loadBackoffUntil() -> Date? {
+        guard let date = defaults.object(forKey: backoffKey) as? Date, date > Date() else {
             return nil
         }
         return date
     }
 
-    func saveBackoffUntil(_ date: Date?, for providerID: String) {
-        let key = backoffKey(for: providerID)
+    func saveBackoffUntil(_ date: Date?) {
         if let date {
-            defaults.set(date, forKey: key)
+            defaults.set(date, forKey: backoffKey)
         } else {
-            defaults.removeObject(forKey: key)
+            defaults.removeObject(forKey: backoffKey)
         }
     }
 

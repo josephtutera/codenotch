@@ -164,6 +164,20 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// A ring can only be drawn when the provider said what the limit was.
     var ringFraction: Double? { usedFraction }
 
+    /// When the numbers on this card were true, which is not always when we
+    /// asked for them.
+    ///
+    /// The provider's own account wins: Codex answers out of a rollout file it
+    /// wrote whenever it last ran, so a fetch that succeeds this second can
+    /// return a reading from Tuesday. `fetchedAt` is the fallback for a
+    /// provider that answers live and so has nothing older to declare.
+    var readingTakenAt: Date? {
+        guard hasReading, let taken = status.staleSince ?? fetchedAt,
+              taken != .distantPast
+        else { return nil }
+        return taken
+    }
+
     /// Signing in means something different per provider, so the prompt has to
     /// say which door to knock on.
     private var authPrompt: String {

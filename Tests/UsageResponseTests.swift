@@ -240,25 +240,25 @@ final class BackoffPersistenceTests: XCTestCase {
     func testRoundTrips() throws {
         let defaults = makeDefaults()
         let until = Date().addingTimeInterval(120)
-        UsageArchive(defaults: defaults).saveBackoffUntil(until, for: "claude")
+        UsageArchive(defaults: defaults).saveBackoffUntil(until)
 
-        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil())
         XCTAssertEqual(loaded.timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 0.01)
     }
 
     /// An expired back-off is not a back-off; it must not hold the next launch up.
     func testAnExpiredBackoffIsIgnored() {
         let defaults = makeDefaults()
-        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10), for: "claude")
-        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10))
+        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil())
     }
 
     func testClearingRemovesIt() {
         let defaults = makeDefaults()
         let archive = UsageArchive(defaults: defaults)
-        archive.saveBackoffUntil(Date().addingTimeInterval(120), for: "claude")
-        archive.saveBackoffUntil(nil, for: "claude")
-        XCTAssertNil(archive.loadBackoffUntil(for: "claude"))
+        archive.saveBackoffUntil(Date().addingTimeInterval(120))
+        archive.saveBackoffUntil(nil)
+        XCTAssertNil(archive.loadBackoffUntil())
     }
 }
 
@@ -522,6 +522,46 @@ final class ReadingAgeTests: XCTestCase {
         let taken = try XCTUnwrap(store.snapshots.first?.fetchedAt)
         XCTAssertEqual(taken.timeIntervalSinceNow, 0, accuracy: 5)
     }
+
+    /// Codex answers out of a rollout file, so a fetch that succeeds this second
+    /// can hand back a reading from days ago and say so in its status. The card
+    /// has to date it from the reading, or it prints "just now" next to a ring
+    /// dimmed for being stale.
+    func testAnOldReadingIsDatedFromWhenItWasTakenNotWhenItWasFetched() throws {
+        let recorded = Date().addingTimeInterval(-3 * 24 * 3600)
+        let snapshot = ProviderSnapshot(
+            id: "codex", displayName: "Codex", glyph: .openai,
+            fidelity: .official, status: .stale(since: recorded),
+            windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)],
+            kind: .codex, fetchedAt: Date()
+        )
+        let taken = try XCTUnwrap(snapshot.readingTakenAt)
+        XCTAssertEqual(taken.timeIntervalSince1970, recorded.timeIntervalSince1970, accuracy: 1)
+    }
+
+    /// A provider that answers live declares nothing older, and then when we
+    /// asked is the only answer there is.
+    func testALiveReadingIsDatedFromTheFetch() throws {
+        let fetched = Date().addingTimeInterval(-120)
+        let snapshot = ProviderSnapshot(
+            id: "claude", displayName: "Claude", glyph: .claude,
+            fidelity: .official, status: .ok,
+            windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)],
+            fetchedAt: fetched
+        )
+        let taken = try XCTUnwrap(snapshot.readingTakenAt)
+        XCTAssertEqual(taken.timeIntervalSince1970, fetched.timeIntervalSince1970, accuracy: 1)
+    }
+
+    /// A cell with no reading has no age to print — the placeholder's
+    /// `distantPast` must not become "56 years ago".
+    func testACellWithNoReadingHasNoAge() {
+        let empty = ProviderSnapshot(
+            id: "claude", displayName: "Claude", glyph: .claude,
+            fidelity: .official, status: .stale(since: .distantPast), windows: []
+        )
+        XCTAssertNil(empty.readingTakenAt)
+    }
 }
 
 /// The notch unfolds whenever the pointer brushes the screen edge, so refetching
@@ -534,12 +574,16 @@ final class UnfoldRefreshTests: XCTestCase {
         let id = "a"
         let displayName = "Stub"
         let glyph = ProviderGlyph.claude
-        private(set) var calls = 0
+        /// Written from whatever thread the fetch lands on, read from the test's
+        /// main actor, so it is not left to luck.
+        private let lock = NSLock()
+        private var count = 0
+        var calls: Int { lock.withLock { count } }
 
         func signOut() async {}
 
         func fetchSnapshot() async throws -> ProviderSnapshot {
-            calls += 1
+            lock.withLock { count += 1 }
             return ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
                                     fidelity: .official, status: .ok,
                                     windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)])

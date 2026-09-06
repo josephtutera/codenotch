@@ -120,11 +120,11 @@ than nothing; the ring dims and the tooltip header says how old they are. The
 back-off deadline is persisted too, so relaunching during a penalty waits instead
 of spending an attempt on it. Every Claude account shares one penalty, because
 the endpoint refuses them together — kept per account, each one's wait was
-re-tripped by its sibling still polling — and two accounts of one tool are asked
-five seconds apart rather than back to back.
+re-tripped by its sibling still polling — and two accounts of one tool that
+answers over the network are asked five seconds apart rather than back to back.
 
 Polling runs every minute, and reaching for the notch refetches on the spot — at
-most once every 15 seconds, because the notch unfolds whenever the pointer
+most once every 30 seconds, because the notch unfolds whenever the pointer
 brushes the bezel. Clicking a ring refetches that provider alone, and
 right-clicking the notch offers **Refresh now** for all of them. Every card says
 how old its reading is, on the title line, so a number is never taken for live
