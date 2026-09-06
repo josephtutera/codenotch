@@ -43,10 +43,10 @@ enum ReleaseNotes {
                           + "windows are untouched."
                 ),
                 ReleaseNote.Change(
-                    title: "Usage is read every minute",
-                    detail: "It used to drop to every five when nothing local "
-                          + "was running. With nothing local to watch, the "
-                          + "numbers are simply kept current."
+                    title: "Usage is read every 30 seconds",
+                    detail: "It used to drop to every five minutes when nothing "
+                          + "local was running. With nothing local to watch, "
+                          + "the numbers are simply kept current."
                 )
             ]
         ),

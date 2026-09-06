@@ -31,6 +31,10 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// How often to look. The floor is not politeness: every tick is an HTTPS
+    /// call per Claude account against an endpoint that answers 429 and then
+    /// backs off for minutes, plus a spawned `codex app-server` per Codex
+    /// account. Half a minute is as fast as that is worth paying for.
     private let refreshInterval: TimeInterval
     /// How long a snapshot stays believable after its last successful fetch.
     private let staleAfter: TimeInterval
@@ -46,7 +50,7 @@ final class UsageStore: ObservableObject {
 
     init(
         providers: [UsageProvider],
-        refreshInterval: TimeInterval = 60,
+        refreshInterval: TimeInterval = 30,
         staleAfter: TimeInterval = 5 * 60,
         archive: UsageArchive = UsageArchive(),
         disconnected: Set<String> = []
