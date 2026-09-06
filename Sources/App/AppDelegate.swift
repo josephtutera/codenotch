@@ -5,10 +5,6 @@ import SwiftUI
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var notchController: NotchWindowController?
     private var store: UsageStore?
-    private var monitors: [String: any AgentActivityMonitor] = [:]
-    /// The monitors' subscriptions, kept apart from everything else's so they
-    /// can be torn down and rebuilt when the accounts change.
-    private var monitorCancellables = Set<AnyCancellable>()
     private var preferences: Preferences?
     private var settings: SettingsWindowController?
     private var whatsNew: WhatsNewWindowController?
@@ -36,7 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !isRunningTests else { return }
 
         let controller = NotchWindowController()
-        var accounts = ConfiguredAccount.defaults
 
         // `CODENOTCH_DEMO=1` puts the design frame's three providers on screen
         // with its numbers, for screenshots and for eyeballing the layout.
@@ -56,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             Preferences.migrateFromPreviousName()
             let preferences = Preferences()
             self.preferences = preferences
-            accounts = preferences.accounts
+            let accounts = preferences.accounts
 
             // Cursor reads the editor's own session rather than a browser one:
             // signing into cursor.com separately created a second, empty account.
@@ -146,17 +141,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 .sink { [weak store] in store?.disconnected = $0 }
                 .store(in: &cancellables)
 
-            // An account added, renamed or removed in settings: the store and
-            // the monitors follow without a relaunch. `dropFirst` skips the
-            // value the store was just built from.
+            // An account added, renamed or removed in settings: the store
+            // follows without a relaunch. `dropFirst` skips the value the store
+            // was just built from.
             preferences.$accounts
                 .dropFirst()
                 .removeDuplicates()
                 .receive(on: RunLoop.main)
-                .sink { [weak self, weak store, weak controller] accounts in
+                .sink { [weak store] accounts in
                     store?.replaceProviders(ProviderFactory.providers(for: accounts) + webProviders)
-                    guard let self, let controller else { return }
-                    self.installMonitors(for: accounts, controller: controller)
                 }
                 .store(in: &cancellables)
 
@@ -192,46 +185,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.store = store
         }
 
-        installMonitors(for: accounts, controller: controller)
-        // Poll usage hard only while something is actually running.
-        store?.isBusy = { [weak self] in
-            self?.monitors.values.contains { m in m.sessions.contains { $0.state == .busy } } ?? false
-        }
-
         controller.show()
         notchController = controller
-    }
-
-    /// What each agent is doing right now, so the notch can say whether it is
-    /// still working without you switching to it.
-    ///
-    /// Rebuilt whole whenever the accounts change: each account is its own
-    /// cell and watches its own directory, so the set of monitors is the set
-    /// of accounts, not a fixed four.
-    @MainActor
-    private func installMonitors(for accounts: [ConfiguredAccount],
-                                 controller: NotchWindowController) {
-        monitors.values.forEach { $0.stop() }
-        monitorCancellables.removeAll()
-
-        let fresh = ProviderFactory.monitors(for: accounts)
-        // A cell that is gone must not keep its last sessions around.
-        for id in monitors.keys where fresh[id] == nil {
-            controller.model.sessions[id] = nil
-        }
-        for (id, monitor) in fresh {
-            monitor.sessionsPublisher
-                .receive(on: RunLoop.main)
-                .sink { [weak controller] live in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        controller?.model.sessions[id] = live
-                    }
-                    controller?.model.now = Date()
-                }
-                .store(in: &monitorCancellables)
-            monitor.start()
-        }
-        monitors = fresh
     }
 
     /// Closing the settings window must not take the app with it.
@@ -257,7 +212,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         store?.stop()
-        monitors.values.forEach { $0.stop() }
         notchController?.stop()
     }
 }

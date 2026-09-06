@@ -524,63 +524,6 @@ final class CredentialCacheTests: XCTestCase {
     }
 }
 
-/// Antigravity had no activity monitor at all, so its ring never showed the
-/// working state the other three had — and the store never learned it was busy,
-/// staying on its slow idle poll while usage was actively being spent.
-@MainActor
-final class AntigravityActivityMonitorTests: XCTestCase {
-    private var root: URL!
-
-    override func setUpWithError() throws {
-        root = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("agy-monitor-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    @discardableResult
-    private func transcript(_ name: String, modified: Date) throws -> URL {
-        let dir = root.appendingPathComponent("\(name)/.system_generated/logs")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let file = dir.appendingPathComponent("transcript.jsonl")
-        try "{}".write(to: file, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.modificationDate: modified],
-                                              ofItemAtPath: file.path)
-        return file
-    }
-
-    func testAJustWrittenTranscriptReadsAsWorking() throws {
-        try transcript("t1", modified: Date())
-        let sessions = AntigravityActivityMonitor.read(root: root, staleAfter: 45)
-        XCTAssertEqual(sessions.count, 1)
-        XCTAssertEqual(sessions.first?.state, .busy)
-        XCTAssertEqual(sessions.first?.name, "Antigravity")
-    }
-
-    /// A finished turn is not work in progress.
-    func testAnOldTranscriptIsNotWorking() throws {
-        try transcript("t1", modified: Date().addingTimeInterval(-600))
-        XCTAssertTrue(AntigravityActivityMonitor.read(root: root, staleAfter: 45).isEmpty)
-    }
-
-    /// Many conversations accumulate; only the newest says what is happening now.
-    func testTheNewestTranscriptWins() throws {
-        try transcript("old", modified: Date().addingTimeInterval(-600))
-        try transcript("live", modified: Date())
-        let sessions = AntigravityActivityMonitor.read(root: root, staleAfter: 45)
-        XCTAssertEqual(sessions.count, 1)
-        XCTAssertEqual(sessions.first?.id, "antigravity.live")
-    }
-
-    func testNoTranscriptsIsQuietRatherThanAnError() {
-        let absent = root.appendingPathComponent("nowhere")
-        XCTAssertTrue(AntigravityActivityMonitor.read(root: absent, staleAfter: 45).isEmpty)
-    }
-}
-
 /// The "Open" button on an account row. The reading is borrowed from an app on
 /// this Mac, so that app is where the account lives — the website is a separate
 /// session that will bounce you to a login if the browser is not signed in.

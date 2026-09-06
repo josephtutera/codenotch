@@ -31,17 +31,9 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Whether any provider is actively being used right now. Your usage cannot
-    /// move while nothing is running, so polling hard through a quiet afternoon
-    /// spends rate-limit budget to re-read a number that has not changed.
-    var isBusy: () -> Bool = { false }
-
     private let refreshInterval: TimeInterval
     /// How long a snapshot stays believable after its last successful fetch.
     private let staleAfter: TimeInterval
-    /// How often to look when nothing is running.
-    private let idleRefreshInterval: TimeInterval
-    private var lastAttempt: Date?
 
     private let archive: UsageArchive
     private var lastGood: [String: (snapshot: ProviderSnapshot, fetchedAt: Date)] = [:]
@@ -55,14 +47,12 @@ final class UsageStore: ObservableObject {
     init(
         providers: [UsageProvider],
         refreshInterval: TimeInterval = 60,
-        idleRefreshInterval: TimeInterval = 5 * 60,
         staleAfter: TimeInterval = 5 * 60,
         archive: UsageArchive = UsageArchive(),
         disconnected: Set<String> = []
     ) {
         self.providers = providers
         self.refreshInterval = refreshInterval
-        self.idleRefreshInterval = idleRefreshInterval
         self.staleAfter = staleAfter
         self.archive = archive
 
@@ -138,7 +128,7 @@ final class UsageStore: ObservableObject {
         refreshNow()
 
         let timer = Timer(timeInterval: refreshInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+            MainActor.assumeIsolated { self?.refreshNow() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -163,34 +153,12 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Decides whether this tick is worth a request at all.
-    private func tick() {
-        let waited = lastAttempt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
-        guard Self.shouldRefresh(
-            isBusy: isBusy(),
-            sinceLastAttempt: waited,
-            idleInterval: idleRefreshInterval
-        ) else { return }
-        refreshNow()
-    }
-
-    /// Poll at full rate while something is running; otherwise wait out the
-    /// idle interval. Pure, so the schedule can be tested without a clock.
-    static func shouldRefresh(
-        isBusy: Bool,
-        sinceLastAttempt: TimeInterval,
-        idleInterval: TimeInterval
-    ) -> Bool {
-        isBusy || sinceLastAttempt >= idleInterval
-    }
-
     func refreshNow() {
         guard !isRefreshing else {
             Log.usage.notice("refresh skipped: one already in flight")
             return
         }
         isRefreshing = true
-        lastAttempt = Date()
         refreshTask = Task { [weak self] in
             await self?.refresh()
             // A cancelled refresh was superseded by another; the flag is that
@@ -232,7 +200,6 @@ final class UsageStore: ObservableObject {
             if let index = self.snapshots.firstIndex(where: { $0.id == providerID }) {
                 self.snapshots[index] = fresh
             }
-            self.lastAttempt = Date()
             // A beat of visible work even when the answer was instant: a spinner
             // that flashes for one frame reads as a glitch, not as a refresh.
             try? await Task.sleep(nanoseconds: 380_000_000)

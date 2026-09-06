@@ -4,11 +4,6 @@ import Combine
 @MainActor
 final class NotchViewModel: ObservableObject {
     @Published var snapshots: [ProviderSnapshot] = []
-    /// Live agent sessions, keyed by the provider they belong to. They surface
-    /// inside that provider's own ring rather than as a cell of their own — one
-    /// ring per provider, so nothing in the notch looks like a ring without
-    /// being one.
-    @Published var sessions: [String: [AgentSession]] = [:]
 
     /// Which cell the cursor is over, if any. Driven from the window controller
     /// rather than SwiftUI's `.onHover`: the panel ignores mouse events until
@@ -46,30 +41,10 @@ final class NotchViewModel: ObservableObject {
     /// that is the only thing that knows which screen that is.
     @Published var hardwareNotch: HardwareNotch?
 
-    /// How much screen there is to spend on the panel.
-    ///
-    /// The tooltip's budget comes out of this: how many sessions a card can
-    /// list before the panel holding it would run off the display. Zero until
-    /// the controller says otherwise, which reads as "no screen known yet".
-    @Published var screenSize: CGSize = .zero
-
-    /// The same screen minus the menu bar and the Dock.
-    ///
-    /// A horizontal notch starts at the *usable* edge and grows inward from
-    /// there, so those two are room it never had. A side notch is centred on
-    /// the whole screen and floats over both, so for that one they are not.
-    @Published var screenUsableSize: CGSize = .zero
-
     /// Take the notch geometry of whichever screen the panel is on.
     func adopt(screen: ScreenDescribing) {
         let merging = edge == .top ? screen.hardwareNotch : nil
         if hardwareNotch != merging { hardwareNotch = merging }
-        // `frame`, not `visibleFrame`: the panel is centred on the full screen
-        // and may sit under the menu bar, so the menu bar is not room lost.
-        let size = screen.frameValue.size
-        if screenSize != size { screenSize = size }
-        let usable = screen.visibleFrameValue.size
-        if screenUsableSize != usable { screenUsableSize = usable }
     }
 
     /// How far in from the bezel the notch's contents start.
@@ -249,12 +224,6 @@ final class NotchViewModel: ObservableObject {
         NotchLayout.ringCenter(index: index, edge: edge, flare: flare) + endSpread
     }
 
-    /// A provider with no activity source gets none, rather than borrowing
-    /// somebody else's.
-    func activity(for providerID: String) -> ActivitySummary? {
-        ActivitySummary(sessions: sessions[providerID] ?? [])
-    }
-
     var hoveredSnapshot: ProviderSnapshot? {
         guard let hoveredIndex, snapshots.indices.contains(hoveredIndex) else { return nil }
         return snapshots[hoveredIndex]
@@ -264,55 +233,19 @@ final class NotchViewModel: ObservableObject {
 
     var panelSize: CGSize { panelSize(cellCount: snapshots.count) }
 
-    /// How stack space maps onto the panel right now.
-    var placement: NotchPlacement { NotchPlacement(edge: edge, panelSize: panelSize) }
-
     /// Room at each end of the stack, for this edge.
-    var slack: CGFloat { slack(cellCount: snapshots.count) }
-
-    func slack(cellCount: Int) -> CGFloat {
-        NotchLayout.slack(for: edge, maxCardHeight: maxCardHeight(cellCount: cellCount))
-    }
-
-    /// How many sessions a tooltip may list here before it has to summarise
-    /// the rest — as many as this screen has room for.
-    var sessionCap: Int { sessionCap(cellCount: snapshots.count) }
-
-    func sessionCap(cellCount: Int) -> Int {
-        guard screenSize != .zero else { return NotchLayout.defaultSessionCap }
-        return NotchLayout.sessionsFitting(cardBudget: cardBudget(cellCount: cellCount),
-                                           windowCount: NotchLayout.maxWindowCount,
-                                           accountLine: hasAccountLine)
-    }
+    var slack: CGFloat { NotchLayout.slack(for: edge, maxCardHeight: maxCardHeight) }
 
     /// Whether any card names its account, which every card then has to leave
     /// room for: the panel is sized once for the whole stack.
     var hasAccountLine: Bool { snapshots.contains { $0.accountLabel != nil } }
 
-    func maxCardHeight(cellCount: Int) -> CGFloat {
-        NotchLayout.maxCardHeight(sessionCap: sessionCap(cellCount: cellCount),
-                                  accountLine: hasAccountLine)
-    }
+    /// How tall the tallest card is: the busiest provider's, plus the account
+    /// line when any card on the stack draws one.
+    var maxCardHeight: CGFloat { NotchLayout.maxCardHeight(accountLine: hasAccountLine) }
 
-    /// How tall the tallest card may be before the panel runs off the screen.
-    ///
-    /// Which way it runs out differs by orientation, because the card's height
-    /// is spent on a different axis: along a side edge it is spent *along* the
-    /// stack, half of it past each end, so the stack itself takes its share
-    /// first. Along a horizontal edge the card hangs *inward* instead, and what
-    /// it competes with is the depth already spent on the notch body and tail.
-    private func cardBudget(cellCount: Int) -> CGFloat {
-        if edge.isVertical {
-            return screenSize.height
-                - shapeLength(cellCount: cellCount)
-                - 2 * NotchLayout.cardCorner
-        }
-        return screenUsableSize.height
-            - contentInset
-            - NotchLayout.bodyDepth(for: edge)
-            - NotchLayout.tailLength
-            - NotchLayout.tailGap
-    }
+    /// How stack space maps onto the panel right now.
+    var placement: NotchPlacement { NotchPlacement(edge: edge, panelSize: panelSize) }
 
     /// The drawn extent of the notch body right now, along the stack.
     ///
@@ -362,7 +295,7 @@ final class NotchViewModel: ObservableObject {
     }
 
     func panelSize(cellCount: Int) -> CGSize {
-        let card = maxCardHeight(cellCount: cellCount)
+        let card = maxCardHeight
         return NotchPlacement.panelSize(
             edge: edge,
             length: shapeLength(cellCount: cellCount)

@@ -251,35 +251,6 @@ final class BackoffPersistenceTests: XCTestCase {
     }
 }
 
-/// Your usage cannot move while nothing is running, so polling hard through a
-/// quiet afternoon spends rate-limit budget re-reading an unchanged number.
-final class RefreshScheduleTests: XCTestCase {
-    private let idle: TimeInterval = 5 * 60
-
-    @MainActor
-    func testBusyAlwaysPolls() {
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: true, sinceLastAttempt: 0, idleInterval: idle))
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: true, sinceLastAttempt: 60, idleInterval: idle))
-    }
-
-    @MainActor
-    func testIdleWaitsOutTheLongerInterval() {
-        XCTAssertFalse(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 60, idleInterval: idle))
-        XCTAssertFalse(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 299, idleInterval: idle))
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 300, idleInterval: idle))
-    }
-
-    /// A first run has never attempted anything and must not be held back.
-    @MainActor
-    func testTheFirstAttemptIsNeverDeferred() {
-        XCTAssertTrue(UsageStore.shouldRefresh(
-            isBusy: false,
-            sinceLastAttempt: .greatestFiniteMagnitude,
-            idleInterval: idle
-        ))
-    }
-}
-
 /// Some failures say something about the account rather than about the network.
 /// Dimming an old number through one of those would keep showing a figure that
 /// is no longer true — and, after an endpoint change, one from a source we no

@@ -2,11 +2,6 @@ import SwiftUI
 
 /// The ring around a provider glyph: a grey track with a coloured arc that
 /// starts at 12 o'clock and sweeps clockwise by the fraction used.
-///
-/// When that provider is doing something right now, a second, much thinner arc
-/// appears *inside* the ring, in the gap between the glyph and the track. It is
-/// deliberately a different radius, a different weight and a neutral colour, so
-/// it reads as a separate fact rather than as the usage number moving.
 struct ProviderRing: View {
     /// Nil when the provider reports what is left but never says out of what —
     /// there is no arc to draw, and inventing one would be a lie in a shape.
@@ -17,7 +12,6 @@ struct ProviderRing: View {
     /// what it means for you — a ring reading 16% while the account is paused
     /// is technically true and practically a lie.
     var isBlocked: Bool = false
-    var activity: ActivitySummary?
     /// A fetch this cell asked for, in flight.
     var isRefreshing: Bool = false
 
@@ -31,43 +25,34 @@ struct ProviderRing: View {
 
     var body: some View {
         ZStack {
-            // Dimming applies to the usage reading only. Whether Claude is
-            // working right now is known first-hand and stays at full strength
-            // even when the percentage behind it has gone stale.
-            ZStack {
-                Circle()
+            Circle()
                     .strokeBorder(Palette.ringTrack, lineWidth: NotchLayout.trackStroke)
 
-                if usedFraction != nil {
-                    Circle()
-                        .inset(by: NotchLayout.trackStroke / 2)
-                        .trim(from: 0, to: sweep)
-                        .stroke(
-                            band.color,
-                            style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round)
-                        )
-                        // Refreshing spins the reading itself rather than
-                        // overlaying a separate spinner: the thing being
-                        // refetched is the thing that should move, and a second
-                        // arc on the same track only competes with it.
-                        .rotationEffect(.degrees(-90 + spin))
-                        // A ring that snaps to a new value reads as a glitch; one
-                        // that sweeps reads as a measurement being taken.
-                        .animation(NotchMotion.reading, value: sweep)
-                        .animation(NotchMotion.reading, value: band)
-                }
-
-                ProviderGlyphView(glyph: glyph)
-                    .foregroundStyle(Palette.textPrimary)
-                    // A spent limit dims its glyph so the ring reads as "waiting".
-                    .opacity(band == .exhausted ? 0.35 : 1)
+            if usedFraction != nil {
+                Circle()
+                    .inset(by: NotchLayout.trackStroke / 2)
+                    .trim(from: 0, to: sweep)
+                    .stroke(
+                        band.color,
+                        style: StrokeStyle(lineWidth: NotchLayout.progressStroke, lineCap: .round)
+                    )
+                    // Refreshing spins the reading itself rather than
+                    // overlaying a separate spinner: the thing being refetched
+                    // is the thing that should move, and a second arc on the
+                    // same track only competes with it.
+                    .rotationEffect(.degrees(-90 + spin))
+                    // A ring that snaps to a new value reads as a glitch; one
+                    // that sweeps reads as a measurement being taken.
+                    .animation(NotchMotion.reading, value: sweep)
+                    .animation(NotchMotion.reading, value: band)
             }
-            .opacity(isStale ? 0.45 : 1)
 
-            if let activity, activity.state != .idle {
-                ActivityArc(summary: activity)
-            }
+            ProviderGlyphView(glyph: glyph)
+                .foregroundStyle(Palette.textPrimary)
+                // A spent limit dims its glyph so the ring reads as "waiting".
+                .opacity(band == .exhausted ? 0.35 : 1)
         }
+        .opacity(isStale ? 0.45 : 1)
         .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
         // Pressed in while it works, and released when the answer lands. The
         // ring is the button, so the ring is what should feel pressed.
@@ -94,70 +79,9 @@ struct ProviderRing: View {
     }
 }
 
-/// The inner indicator: a short arc that spins while work is happening, and a
-/// full pulsing ring when something is blocked waiting on you.
-private struct ActivityArc: View {
-    let summary: ActivitySummary
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var spinning = false
-    @State private var pulsing = false
-
-    /// How much of the circle the moving arc covers.
-    private let arcFraction: CGFloat = 0.25
-
-    private var inset: CGFloat {
-        (NotchLayout.ringDiameter - NotchLayout.activityDiameter) / 2
-    }
-
-    var body: some View {
-        Group {
-            switch summary.state {
-            case .working: spinner
-            case .waiting: pulse
-            case .idle:    EmptyView()
-            }
-        }
-        .frame(width: NotchLayout.ringDiameter, height: NotchLayout.ringDiameter)
-    }
-
-    private var spinner: some View {
-        Circle()
-            .inset(by: inset)
-            .trim(from: 0, to: arcFraction)
-            .stroke(
-                summary.color,
-                style: StrokeStyle(lineWidth: NotchLayout.activityStroke, lineCap: .round)
-            )
-            .rotationEffect(.degrees(spinning ? 360 : 0))
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.linear(duration: 1.1).repeatForever(autoreverses: false)) {
-                    spinning = true
-                }
-            }
-            .onDisappear { spinning = false }
-    }
-
-    private var pulse: some View {
-        Circle()
-            .inset(by: inset)
-            .stroke(summary.color, lineWidth: NotchLayout.activityStroke)
-            .opacity(pulsing ? 0.3 : 1)
-            .onAppear {
-                guard !reduceMotion else { return }
-                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
-                    pulsing = true
-                }
-            }
-            .onDisappear { pulsing = false }
-    }
-}
-
 /// A ring and the percent burned underneath it.
 struct ProviderCell: View {
     let snapshot: ProviderSnapshot
-    var activity: ActivitySummary?
     var isRefreshing: Bool = false
 
     /// A dash, not "0%": nothing read is not the same as nothing used.
@@ -172,7 +96,6 @@ struct ProviderCell: View {
                 glyph: snapshot.glyph,
                 isStale: snapshot.status.isStale || !snapshot.hasReading,
                 isBlocked: snapshot.block != nil,
-                activity: activity,
                 isRefreshing: isRefreshing
             )
             Text(percentText)

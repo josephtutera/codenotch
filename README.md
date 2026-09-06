@@ -4,8 +4,7 @@
 
 A macOS agent app that pins a small black notch to the **right edge** of the screen
 showing how much of each LLM's session limit you have burned, and whether you have hit
-the wall yet. Hover a provider to see its individual limit windows and when they reset — and
-tells you at a glance whether Claude is still working, done, or waiting on you.
+the wall yet. Hover a provider to see its individual limit windows and when they reset.
 The ring always shows the **current session**, the same window Claude's own usage
 panel leads with, so the two never disagree.
 
@@ -43,11 +42,6 @@ The notch is built, matches the design frame, and shows **your real Claude
 usage** — the same session and weekly percentages Claude's own usage panel
 reports, refreshed every 60 seconds. `make run` puts it on screen, hover pops the
 detail card.
-
-It also answers **"is Claude still working?"** — inside the Claude ring, a thin
-arc spins while a session is working and becomes a pulsing amber ring when one is
-blocked waiting on you. Hover for every live session by name, where it is
-running, and what it wants.
 
 Cursor and Codex are wired up too, both reading locally: Cursor borrows the
 editor's own session from its SQLite state store, and Codex reads the rate-limit
@@ -124,8 +118,8 @@ only — 60s, doubling per consecutive 429, capped at 15 minutes. The last good
 reading is kept across launches, so a refused fetch shows dated numbers rather
 than nothing; the ring dims and the tooltip header says how old they are. The
 back-off deadline is persisted too, so relaunching during a penalty waits instead
-of spending an attempt on it. Polling drops to every 5 minutes when no session is
-running, and right-clicking the notch offers **Refresh now**.
+of spending an attempt on it. Polling runs every 60 seconds, and right-clicking
+the notch offers **Refresh now**.
 
 **Logs:** the app is an agent with no window, so anything worth diagnosing goes to
 the unified log.

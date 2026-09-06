@@ -31,6 +31,26 @@ struct ReleaseNote: Equatable {
 enum ReleaseNotes {
     static let all: [ReleaseNote] = [
         ReleaseNote(
+            version: "1.4.0",
+            headline: "One fact per ring: how much of the limit is gone.",
+            changes: [
+                ReleaseNote.Change(
+                    title: "The live session readout is gone",
+                    detail: "The spinning arc inside a ring, and the list of "
+                          + "sessions under the tooltip, only ever saw agents "
+                          + "running on this Mac — so work done in a remote "
+                          + "session read as idle. Rings, percentages and limit "
+                          + "windows are untouched."
+                ),
+                ReleaseNote.Change(
+                    title: "Usage is read every minute",
+                    detail: "It used to drop to every five when nothing local "
+                          + "was running. With nothing local to watch, the "
+                          + "numbers are simply kept current."
+                )
+            ]
+        ),
+        ReleaseNote(
             version: "1.3.0",
             headline: "Codex reads live, and Always show stays on.",
             changes: [

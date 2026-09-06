@@ -157,13 +157,6 @@ Both reset forms are read now, so a build emitting the other one still works, an
 been used since February and had recorded no snapshot; a dash and "Codex has not
 recorded a usage snapshot yet" is what "we do not know" looks like.
 
-**Activity is a heuristic, and says so.** Codex publishes no status field — no
-equivalent of Claude Code's `status` or Cursor's `unfinishedRunAt`. What it does
-do is append to the rollout while a turn runs, so a file written seconds ago
-means work is happening. `CodexActivityMonitor` errs short: the ring stops eight
-seconds after the last write rather than claiming activity it cannot see. If
-Codex grows a real status field, that should replace this.
-
 Perplexity's adapter is kept but unregistered. `WebSessionProvider` is the
 working pattern for a site behind bot management, and re-registering is one line.
 
@@ -331,56 +324,19 @@ ad-hoc build gets a new identity every rebuild and the prompt would come back
 after every `make run`. Click **Always Allow** once and it sticks. A refusal
 backs the provider off for five minutes so a denied prompt cannot spam.
 
-## M4b — Is it working? (agent activity)
+## M4b — Is it working? (agent activity) — removed in 1.4.0
 
-Answers "do I need to go and look" without going and looking. Claude Code and
-Cursor both feed it, through one display model.
+Built and shipped: each Claude account's `sessions/` directory, Cursor's
+`composerHeaders`, Codex's rollouts and Antigravity's transcripts were watched
+for live agent sessions, which drove a thin arc inside the provider's ring and a
+session list under its tooltip.
 
-- [x] `AgentSession` — one display model; each monitor does its own parsing
-- [x] `ClaudeSessionRecord` — decodes `~/.claude/sessions/<pid>.json`, which
-      Claude Code writes on every state change. `status` is `busy` / `waiting` /
-      `idle`, and a waiting session carries `waitingFor`
-- [x] `CursorActivityMonitor` — Cursor publishes no session registry, so its
-      working state comes from `composerHeaders` in the editor's own SQLite
-      store. See "Reading Cursor's working state" below
-- [x] `ProcessLiveness` — a crashed session leaves its file behind saying `busy`
-      forever, so the pid is checked, and its start time is compared against the
-      record to survive pid reuse
-- [x] `SessionMonitor` — watches the directory with a `DispatchSource` rather than
-      polling, so a state change shows up immediately. A slow timer runs alongside
-      purely to notice processes that died without touching the directory, which
-      no file event will ever report
-- [x] `ActivitySummary` — reduces every live session to one state, with `waiting`
-      outranking `busy`: it is the only state that is asking you for something
-- [x] The indicator lives **inside the provider's own ring**, not in a cell of its
-      own: a thin arc in the gap between the glyph and the inside edge of the
-      track. It spins while busy and becomes a full pulsing ring while waiting.
-      Reduce Motion drops both animations and keeps the colour
-- [x] Session list appended to that provider's tooltip, under a rule — every
-      session by name, where it is running, what it is waiting for, and how long
-      it has been in that state
-- [x] Claude Code sessions belong to the Claude cell only; other providers get no
-      activity rather than a borrowed one
-- [x] Tests: status and `tempo` mapping, `procStart` timezone, pid-reuse guard
-      inputs, summary precedence, label widths, elapsed copy
-- [ ] Notify on `waiting` (deliberately not built — colour and pulse only, per the
-      design call. The hook is `ActivitySummary.waitingSessions`)
-- [ ] Click a session to focus its terminal window
-
-### Why it is inside the ring
-
-It started as a cell of its own, which put two ring-shaped things in the notch
-that looked alike and meant different things — usage in one, activity in the
-other. Folding it into the provider's ring means every ring in the notch is that
-provider's ring. Three things keep the two facts apart inside it: a different
-radius, a much thinner stroke, and a neutral colour. Working is **white** on
-purpose — the outer ring's colour already encodes how much of the limit is gone,
-so a green or amber inner arc could be misread as part of that scale. Waiting is
-the exception and takes amber, because it is the one state asking for something.
-
-Staleness dimming applies to the usage reading only. Whether Claude is working is
-known first-hand from a local file, so it stays at full strength even when the
-percentage behind it has gone stale.
+Removed because it only ever saw sessions running on *this* Mac, and most work
+now happens in a remote session it could not see — so the list read "idle" while
+the agent was working. The notch is back to one fact per ring: how much of the
+limit is gone. Nothing about the usage readings depended on it, except the
+polling cadence, which no longer backs off to 5 minutes when nothing local is
+running: it is every 60 seconds, always.
 
 ### The floating notch
 
@@ -488,13 +444,6 @@ most-constrained window. Positional and "whichever is biggest" rules both let th
 subject move. Naming it is what stops it.
 
 ### The bugs worth remembering
-
-**Timezone.** `procStart` in the session file is a ctime string in **UTC** — "Fri Aug 28
-05:15:20 2026" for a process that `ps` reports as starting at 12:15:20 local.
-Parsing it as local time put it seven hours out, the pid-reuse guard concluded
-the process was a different one, and the activity cell silently never appeared.
-The liveness check now anchors on `startedAt`, which is unambiguous epoch
-milliseconds, and `parseProcStart` pins the timezone to UTC.
 
 **Rate limiting.** `GET /api/oauth/usage` returns **429** if you call it too
 often — which repeated `make run` during development does easily, since every
@@ -671,8 +620,8 @@ two headers on top of each other. Two causes, and only the second one mattered.
 **Clipping.** The card did not mask its own contents, so during a resize the rows
 of a taller card hung outside a shorter background. `.clipShape` on the same
 rounded rectangle fixes that, and it is still worth having for the case where one
-provider's card resizes in place — Claude's grows a session list when an agent
-starts. The tail stays outside the clip: it is part of the silhouette, not of the
+provider's card resizes in place — a card grows a line when an account is named
+or a limit is paused. The tail stays outside the clip: it is part of the silhouette, not of the
 contents.
 
 **The contents interpolating.** SwiftUI was animating one provider's rows into
@@ -748,8 +697,7 @@ spinning indefinitely anyway.
 
 The spin is applied to the **usage arc itself** rather than to an overlaid
 spinner: the thing being refetched should be the thing that moves, and a second
-arc on the same track only competes with it. The activity spinner stays where it
-is, further in — it is a different fact.
+arc on the same track only competes with it.
 
 ### Two things the fold got wrong at first
 
@@ -1478,9 +1426,8 @@ and Codenotch still signs in to nothing.
       Settings take effect without a relaunch. A fetch in flight against the old
       list is cancelled rather than allowed to write the old list's snapshots
       over the new ones, and a removed account's archived reading goes with it.
-- [x] `ProviderFactory` builds providers and monitors from the accounts in one
-      place, so a cell can never lack its monitor. Each Claude account watches
-      its own `sessions/`; each Codex account its own rollouts.
+- [x] `ProviderFactory` builds the providers from the accounts in one place, so
+      the notch's cells and the accounts can never disagree.
 - [x] Settings: **Add account…** opens a sheet for a name and a folder (the
       folder follows the name — "Max" suggests `~/.claude-max` — until it is
       typed in). Every account row has **Edit…**; the tools. own rows can only be
