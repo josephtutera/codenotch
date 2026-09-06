@@ -119,6 +119,10 @@ private struct TooltipHeader<Mark: View>: View {
             Text(title)
                 .font(Typography.cardTitle)
                 .foregroundStyle(Palette.textPrimary)
+                // One line, always: `NotchLayout.cardHeight` reserves exactly
+                // one, and a title that wraps pushes the last row out under
+                // the card's clip.
+                .lineLimit(1)
             if let note {
                 Spacer(minLength: Design.px(20))
                 Text(note)
@@ -132,95 +136,20 @@ private struct TooltipHeader<Mark: View>: View {
 
 /// A label on the left and a quieter value on the right — the row shape the
 /// design frame uses throughout.
-private struct SplitRow<Accessory: View>: View {
+private struct SplitRow: View {
     let leading: String
     let trailing: String
     var leadingColor: Color = Palette.textPrimary
     var trailingColor: Color = Palette.textSecondary
-    /// Sits immediately before the trailing text, inside the same group, so it
-    /// travels with the word instead of drifting to the middle of the row.
-    @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
         HStack(spacing: Design.px(20)) {
             Text(leading).foregroundStyle(leadingColor)
             Spacer(minLength: 0)
-            HStack(spacing: NotchLayout.statusDotGap) {
-                accessory()
-                Text(trailing).foregroundStyle(trailingColor)
-            }
+            Text(trailing).foregroundStyle(trailingColor)
         }
         .font(Typography.cardBody)
         .lineLimit(1)
-    }
-}
-
-extension SplitRow where Accessory == EmptyView {
-    init(leading: String,
-         trailing: String,
-         leadingColor: Color = Palette.textPrimary,
-         trailingColor: Color = Palette.textSecondary) {
-        self.init(leading: leading, trailing: trailing,
-                  leadingColor: leadingColor, trailingColor: trailingColor,
-                  accessory: { EmptyView() })
-    }
-}
-
-/// The ring beside a session's status.
-///
-/// Turning while the agent is working, still when it is not — so the row says
-/// what is happening before the word is read.
-private struct StatusRing: View {
-    let state: AgentSession.State
-    let color: Color
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    /// One turn, in seconds. Slow enough to read as deliberate rather than as
-    /// something struggling.
-    private static let period: Double = 1.4
-
-    var body: some View {
-        Group {
-            switch state {
-            case .busy:
-                if reduceMotion {
-                    // Still, but still three-quarters: the gap alone says
-                    // "in progress" without anything moving.
-                    ring(trim: 0.75)
-                } else {
-                    // A timeline rather than `repeatForever`. An endless
-                    // animation has to be cancelled to stop, and setting the
-                    // value it is already heading towards does not cancel it —
-                    // which is exactly how the refresh ring here once span for
-                    // ever. Derived from the clock, it simply stops being drawn.
-                    TimelineView(.animation) { context in
-                        ring(trim: 0.75)
-                            .rotationEffect(.degrees(angle(at: context.date)))
-                    }
-                }
-            case .waiting:
-                // Half a ring, held still: blocked, not progressing.
-                ring(trim: 0.5)
-            case .idle:
-                ring(trim: 1)
-            }
-        }
-        .frame(width: NotchLayout.statusDot, height: NotchLayout.statusDot)
-    }
-
-    private func ring(trim: CGFloat) -> some View {
-        Circle()
-            .trim(from: 0, to: trim)
-            .stroke(color,
-                    style: StrokeStyle(lineWidth: NotchLayout.statusDotStroke, lineCap: .round))
-            // Start the gap at the top, where the eye lands first.
-            .rotationEffect(.degrees(-90))
-    }
-
-    private func angle(at date: Date) -> Double {
-        let turns = date.timeIntervalSinceReferenceDate / Self.period
-        return turns.truncatingRemainder(dividingBy: 1) * 360
     }
 }
 
@@ -272,13 +201,16 @@ private struct ProviderTooltip: View {
     let snapshot: ProviderSnapshot
     let now: Date
 
-    /// Only worth saying when the numbers are not current. A remembered reading
-    /// has to be dated, or it quietly passes itself off as live.
+    /// When this reading was taken, said on every card rather than only on a
+    /// dimmed one. A number with no age on it is read as live, and between the
+    /// refresh interval and a rate-limit penalty it can be several minutes old
+    /// while the ring looks perfectly healthy.
+    ///
+    /// Dated by `readingTakenAt` rather than by when the fetch returned:
+    /// saying "just now" beside a ring dimmed for being stale says two opposite
+    /// things at once, and the wrong one is the one in words.
     private var readingAge: String? {
-        guard snapshot.hasReading, let since = snapshot.status.staleSince,
-              since != .distantPast
-        else { return nil }
-        return ElapsedCopy.ago(since: since, now: now)
+        snapshot.readingTakenAt.map { ElapsedCopy.ago(since: $0, now: now) }
     }
 
     var body: some View {
@@ -341,117 +273,19 @@ private struct BlockedRow: View {
     }
 }
 
-// MARK: - Activity
-
-private struct SessionRow: View {
-    let session: AgentSession
-    let now: Date
-
-    private var stateColor: Color {
-        switch session.state {
-        case .busy:    return Palette.ample
-        case .waiting: return Palette.watch
-        case .idle:    return Palette.textSecondary
-        }
-    }
-
-    private var stateWord: String {
-        switch session.state {
-        case .busy:    return "working"
-        case .waiting: return "waiting"
-        case .idle:    return "idle"
-        }
-    }
-
-    /// While blocked, what it is blocked on matters more than where it lives.
-    private var detail: String {
-        if session.state == .waiting, let waitingFor = session.waitingFor, !waitingFor.isEmpty {
-            return waitingFor
-        }
-        return session.detail
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            SplitRow(leading: session.name, trailing: stateWord,
-                     trailingColor: stateColor) {
-                StatusRing(state: session.state, color: stateColor)
-            }
-            SplitRow(
-                leading: detail,
-                trailing: ElapsedCopy.text(since: session.since, now: now),
-                leadingColor: Palette.textSecondary
-            )
-            .padding(.top, NotchLayout.sessionRowGap)
-        }
-    }
-}
-
-/// The live sessions for this provider, under a rule that separates them from
-/// the limit windows above — they answer a different question.
-private struct SessionList: View {
-    let summary: ActivitySummary
-    let now: Date
-    /// How many rows this screen has room for; the rest are counted.
-    let cap: Int
-
-    /// Busy sessions first, so what is hidden is what matters least.
-    private var ordered: [AgentSession] {
-        summary.sessions.sorted { a, b in
-            let rank: (AgentSession) -> Int = {
-                switch $0.state { case .waiting: 0; case .busy: 1; case .idle: 2 }
-            }
-            return rank(a) == rank(b) ? a.since > b.since : rank(a) < rank(b)
-        }
-    }
-
-    private var shown: [AgentSession] { Array(ordered.prefix(max(0, cap))) }
-    private var hidden: Int { max(0, summary.sessions.count - shown.count) }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Rectangle()
-                .fill(Palette.ringTrack)
-                .frame(height: NotchLayout.hairline)
-                .padding(.top, NotchLayout.blockSpacing)
-
-            // Only as many as the card's budgeted height can hold. The rest
-            // are counted rather than drawn: the card is clipped, not scrolled,
-            // so anything past the budget silently pushes the title off the top.
-            ForEach(Array(shown.enumerated()), id: \.element.id) { index, session in
-                SessionRow(session: session, now: now)
-                    .padding(.top, NotchLayout.blockSpacing)
-            }
-
-            if hidden > 0 {
-                Text("and \(hidden) more")
-                    .font(Typography.cardBody)
-                    .foregroundStyle(Palette.textSecondary)
-                    .padding(.top, NotchLayout.blockSpacing)
-            }
-        }
-    }
-}
-
 // MARK: - Entry point
 
 struct TooltipCard: View {
     let snapshot: ProviderSnapshot
-    var activity: ActivitySummary?
     let now: Date
     /// Which way the card sits from the notch, which follows from the edge.
     var direction: NotchEdge.TooltipDirection = .leading
-    /// How many sessions this screen has room to list. Solved from the display
-    /// rather than fixed, so a big screen hides nothing.
-    var sessionCap: Int = NotchLayout.defaultSessionCap
 
     /// The same figure the hover region uses, so what is drawn and what is
     /// reachable can never drift apart.
     private var height: CGFloat {
         NotchLayout.cardHeight(
             windowCount: snapshot.windows.count,
-            sessionCount: activity?.sessions.count ?? 0,
-            sessionCap: sessionCap,
             statusMessage: snapshot.statusMessage,
             blockMessage: snapshot.block?.summary(now: now),
             accountLine: snapshot.accountLabel != nil
@@ -465,12 +299,7 @@ struct TooltipCard: View {
             // instead of shoving each other around. Top-aligned so neither
             // drifts while the card resizes around them.
             ZStack(alignment: .topLeading) {
-                VStack(alignment: .leading, spacing: 0) {
-                    ProviderTooltip(snapshot: snapshot, now: now)
-                    if let activity {
-                        SessionList(summary: activity, now: now, cap: sessionCap)
-                    }
-                }
+                ProviderTooltip(snapshot: snapshot, now: now)
                 // An identity, so one provider's rows are never interpolated
                 // into another's — that is what slid text through positions
                 // belonging to neither layout. A crossfade rather than an

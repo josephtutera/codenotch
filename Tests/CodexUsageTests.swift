@@ -86,41 +86,6 @@ final class CodexUsageTests: XCTestCase {
     }
 }
 
-/// The activity signal is a heuristic — a rollout written moments ago — so what
-/// it will and will not claim is worth pinning down.
-@MainActor
-final class CodexActivityTests: XCTestCase {
-    private let now = Date(timeIntervalSince1970: 1_788_000_000)
-
-    func testARolloutWrittenJustNowIsBusy() throws {
-        let s = try XCTUnwrap(CodexActivityMonitor.session(
-            id: "codex.x", name: "Codex",
-            modified: now.addingTimeInterval(-2), staleAfter: 8, now: now
-        ))
-        XCTAssertEqual(s.state, .busy)
-        XCTAssertEqual(s.name, "Codex")
-    }
-
-    /// It errs short on purpose: a finished turn must not keep the ring spinning.
-    func testAnOlderRolloutIsNotActivity() {
-        XCTAssertNil(CodexActivityMonitor.session(
-            id: "codex.x", name: "Codex",
-            modified: now.addingTimeInterval(-30), staleAfter: 8, now: now
-        ))
-    }
-
-    func testTheBoundaryIsInclusive() {
-        XCTAssertNotNil(CodexActivityMonitor.session(
-            id: "codex.x", name: "Codex",
-            modified: now.addingTimeInterval(-8), staleAfter: 8, now: now
-        ))
-        XCTAssertNil(CodexActivityMonitor.session(
-            id: "codex.x", name: "Codex",
-            modified: now.addingTimeInterval(-8.1), staleAfter: 8, now: now
-        ))
-    }
-}
-
 /// Codex writes usage into a file as it runs, so the file stops changing the
 /// moment you stop using Codex. Reading it still succeeds instantly, which is
 /// how a three-day-old percentage came to be shown as a live one.
@@ -277,91 +242,6 @@ final class CodexBridgeTests: XCTestCase {
         XCTAssertTrue(lines[0].contains("codenotch"))
         XCTAssertTrue(lines[2].contains("account/rateLimits/read"))
         XCTAssertTrue(lines[2].contains("\"id\":\(CodexBridge.requestID)"))
-    }
-}
-
-/// "Codex" is two programs. The CLI and the VS Code extension append to a
-/// rollout under `~/.codex/sessions`; the desktop app — ChatGPT.app, which is
-/// what most people now mean — writes none of them, keeping its threads in
-/// `~/.codex/sqlite/codex-dev.db` instead.
-///
-/// The activity monitor watched only the rollouts, so it could never see the
-/// desktop app working: on this machine every rollout was written by VS Code
-/// and the newest was three days old, while the desktop catalogue had been
-/// touched seconds ago. The ring simply never span.
-final class CodexDesktopActivityTests: XCTestCase {
-    private let store = URL(fileURLWithPath: "/tmp/codex-desktop-test.db")
-
-    private func makeCatalogue(rows: [(Double, String)]) throws -> URL {
-        let url = URL(fileURLWithPath: NSTemporaryDirectory())
-            .appendingPathComponent("codex-dev-\(UUID().uuidString).db")
-        var db: OpaquePointer?
-        XCTAssertEqual(sqlite3_open(url.path, &db), SQLITE_OK)
-        defer { sqlite3_close(db) }
-        sqlite3_exec(db, """
-            CREATE TABLE local_thread_catalog (
-                thread_id TEXT, display_title TEXT NOT NULL,
-                source_updated_at REAL NOT NULL, source_kind TEXT);
-            """, nil, nil, nil)
-        for (at, title) in rows {
-            sqlite3_exec(db, """
-                INSERT INTO local_thread_catalog
-                (thread_id, display_title, source_updated_at, source_kind)
-                VALUES ('t', '\(title)', \(at), 'chatgpt');
-                """, nil, nil, nil)
-        }
-        return url
-    }
-
-    func testItReadsTheNewestDesktopThread() throws {
-        let url = try makeCatalogue(rows: [(1_788_000_000, "Older"),
-                                           (1_788_582_173.099, "Deep SaaS Research")])
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        let newest = try XCTUnwrap(CodexStore.newestDesktopThread(in: url))
-        XCTAssertEqual(newest.title, "Deep SaaS Research")
-        // Seconds with a fraction, not the milliseconds the `threads` table
-        // next door uses — reading it as milliseconds puts it in 1970.
-        XCTAssertEqual(newest.updatedAt.timeIntervalSince1970, 1_788_582_173.099, accuracy: 0.01)
-    }
-
-    /// The reported symptom: the desktop app is working now, the rollouts are
-    /// days old, and the ring has to spin.
-    @MainActor func testDesktopWorkCountsAsActivity() throws {
-        let now = Date()
-        let url = try makeCatalogue(rows: [(now.addingTimeInterval(-2).timeIntervalSince1970,
-                                            "Deep SaaS Research")])
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        // No rollout store at all, which is the case for someone who has only
-        // ever used the desktop app.
-        let sessions = CodexActivityMonitor.read(
-            stateStore: URL(fileURLWithPath: "/nonexistent/state.sqlite"),
-            desktopStore: url, staleAfter: 8, now: now
-        )
-        XCTAssertEqual(sessions.count, 1, "the desktop app's work was invisible")
-        XCTAssertEqual(sessions.first?.state, .busy)
-        XCTAssertEqual(sessions.first?.name, "Deep SaaS Research",
-                       "the thread's own name is more use than \"Codex\"")
-    }
-
-    /// And it still errs short: a finished conversation must not keep spinning.
-    @MainActor func testAnOldDesktopThreadIsNotActivity() throws {
-        let now = Date()
-        let url = try makeCatalogue(rows: [(now.addingTimeInterval(-600).timeIntervalSince1970,
-                                            "Yesterday's chat")])
-        defer { try? FileManager.default.removeItem(at: url) }
-
-        XCTAssertTrue(CodexActivityMonitor.read(
-            stateStore: URL(fileURLWithPath: "/nonexistent/state.sqlite"),
-            desktopStore: url, staleAfter: 8, now: now
-        ).isEmpty)
-    }
-
-    func testAMissingCatalogueIsNotAnError() {
-        XCTAssertNil(CodexStore.newestDesktopThread(
-            in: URL(fileURLWithPath: "/nonexistent/codex-dev.db")
-        ))
     }
 }
 

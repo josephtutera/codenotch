@@ -17,6 +17,19 @@ enum ProviderKind: String, Codable, Equatable, CaseIterable {
     /// A stub, or a web session with no local tool behind it.
     case other
 
+    /// Whether two accounts of this tool are two requests to one endpoint,
+    /// and so have to be spaced out rather than sent together.
+    ///
+    /// The local ones are not: Codex reads a file this Mac already has, and
+    /// Antigravity asks a language server on this machine. Nothing there can
+    /// refuse a second caller for being the same caller.
+    var sharesARemoteLimit: Bool {
+        switch self {
+        case .claude, .cursor:            return true
+        case .codex, .antigravity, .other: return false
+        }
+    }
+
     /// What the tool is called, for rows and prompts.
     var toolName: String {
         switch self {

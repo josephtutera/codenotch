@@ -1,7 +1,9 @@
 import Foundation
 
-/// "how long has it been like this" — the second half of answering "is Claude
-/// still working".
+/// A span of time in words: "just now", "12 min ago", "2 hr 5 min ago".
+///
+/// Used to date a reading on its card, so a number is never read as live when
+/// it is minutes old.
 enum ElapsedCopy {
     /// The same span, phrased as a point in the past.
     static func ago(since: Date, now: Date = Date()) -> String {

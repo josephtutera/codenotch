@@ -31,6 +31,46 @@ struct ReleaseNote: Equatable {
 enum ReleaseNotes {
     static let all: [ReleaseNote] = [
         ReleaseNote(
+            version: "1.4.0",
+            headline: "One fact per ring: how much of the limit is gone.",
+            changes: [
+                ReleaseNote.Change(
+                    title: "The live session readout is gone",
+                    detail: "The spinning arc inside a ring, and the list of "
+                          + "sessions under the tooltip, only ever saw agents "
+                          + "running on this Mac — so work done in a remote "
+                          + "session read as idle. Rings, percentages and limit "
+                          + "windows are untouched."
+                ),
+                ReleaseNote.Change(
+                    title: "Usage is read every minute",
+                    detail: "It used to drop to every five when nothing was "
+                          + "running on this Mac. With nothing local to watch, "
+                          + "the numbers are simply kept current."
+                ),
+                ReleaseNote.Change(
+                    title: "Reaching for the notch refetches",
+                    detail: "So the number you open it to read is the current "
+                          + "one rather than one from a minute ago. Opening it "
+                          + "again within 30 seconds costs nothing."
+                ),
+                ReleaseNote.Change(
+                    title: "Two Claude accounts stop rate-limiting each other",
+                    detail: "Polled a second apart, both were refused at once — "
+                          + "and each one's penalty was re-tripped by the other "
+                          + "still asking, so the rings sat dimmed on old "
+                          + "numbers. They now share one wait, and ask five "
+                          + "seconds apart."
+                ),
+                ReleaseNote.Change(
+                    title: "Every card says how old its reading is",
+                    detail: "On the title line, always — not only once it has "
+                          + "gone dim. A number with no age on it is read as "
+                          + "live, and after a rate limit it may be minutes old."
+                )
+            ]
+        ),
+        ReleaseNote(
             version: "1.3.0",
             headline: "Codex reads live, and Always show stays on.",
             changes: [

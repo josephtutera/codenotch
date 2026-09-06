@@ -2,33 +2,31 @@ import XCTest
 import SwiftUI
 @testable import Codenotch
 
-/// Renders the tooltip with a session in every state.
+/// Renders the tooltip with every limit window a provider reports.
 ///
 /// Partly a smoke test — a card that fails to lay out fails here rather than on
 /// someone's screen — and partly a way to actually look at it: set
 /// `TOOLTIP_RENDER_PATH` and the frame is written there.
 @MainActor
 final class TooltipRenderTests: XCTestCase {
-    private func session(_ name: String, _ state: AgentSession.State,
-                         minutes: Int) -> AgentSession {
-        AgentSession(id: name, name: name, detail: "Terminal · usage-notch",
-                     state: state, waitingFor: state == .waiting ? "your answer" : nil,
-                     since: Date().addingTimeInterval(Double(-minutes) * 60))
-    }
-
-    func testTheCardLaysOutEverySessionState() throws {
+    func testTheCardLaysOutEveryLimitWindow() throws {
+        let now = Date()
         let snapshot = ProviderSnapshot(
             id: "claude", displayName: "Claude", glyph: .claude,
             fidelity: .official, status: .ok,
-            windows: [LimitWindow(id: "session", label: "Session", usedFraction: 0.47)]
+            windows: [
+                LimitWindow(id: "session", label: "Current session", usedFraction: 0.47,
+                            resetsAt: now.addingTimeInterval(51 * 60)),
+                LimitWindow(id: "week", label: "All models", usedFraction: 0.26,
+                            resetsAt: now.addingTimeInterval(3 * 24 * 3600)),
+                LimitWindow(id: "opus", label: "Scoped", usedFraction: 0.15,
+                            resetsAt: now.addingTimeInterval(3 * 24 * 3600))
+            ],
+            accountLabel: "joseph@carepilot.com · CarePilot",
+            fetchedAt: now.addingTimeInterval(-2 * 60)
         )
-        let activity = ActivitySummary(sessions: [
-            session("codenotch-6f", .idle, minutes: 0),
-            session("hivinz-web-2f", .busy, minutes: 1),
-            session("codenotch-18", .waiting, minutes: 3)
-        ])
 
-        let view = TooltipCard(snapshot: snapshot, activity: activity, now: Date())
+        let view = TooltipCard(snapshot: snapshot, now: now)
             .padding(20)
             .background(Color.black)
 
@@ -36,10 +34,10 @@ final class TooltipRenderTests: XCTestCase {
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.nsImage)
 
-        // Three sessions of two lines each, under the window rows: a card that
-        // silently collapsed would still render, just far too short.
+        // Three window blocks, each a label, a bar and a percentage: a card
+        // that silently collapsed would still render, just far too short.
         XCTAssertGreaterThan(image.size.height, NotchLayout.cardWidth * 0.5,
-                             "the card laid out far shorter than three sessions need")
+                             "the card laid out far shorter than three windows need")
         XCTAssertGreaterThan(image.size.width, NotchLayout.cardWidth)
 
         if let path = ProcessInfo.processInfo.environment["TOOLTIP_RENDER_PATH"] {

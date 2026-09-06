@@ -40,10 +40,8 @@ struct NotchRootView: View {
                    model.isExpanded {
                     TooltipCard(
                         snapshot: snapshot,
-                        activity: model.activity(for: snapshot.id),
                         now: model.now,
-                        direction: model.edge.tooltipDirection,
-                        sessionCap: model.sessionCap
+                        direction: model.edge.tooltipDirection
                     )
                         // Deliberately *no* `.id` here: the card is one object
                         // that travels and resizes between cells, which reads
@@ -104,7 +102,6 @@ struct NotchRootView: View {
         let stack = ForEach(Array(model.snapshots.enumerated()), id: \.element.id) { index, snapshot in
             ProviderCell(
                 snapshot: snapshot,
-                activity: model.activity(for: snapshot.id),
                 isRefreshing: model.refreshing.contains(snapshot.id)
             )
                 // Pinned to what the cell claims along the stack, or the drawn
@@ -190,8 +187,6 @@ struct NotchRootView: View {
             ? NotchLayout.cardWidth
             : NotchLayout.cardHeight(
                 windowCount: snapshot.windows.count,
-                sessionCount: model.activity(for: snapshot.id)?.sessions.count ?? 0,
-                sessionCap: model.sessionCap,
                 statusMessage: snapshot.statusMessage,
                 blockMessage: snapshot.block?.summary(now: model.now),
                 accountLine: snapshot.accountLabel != nil

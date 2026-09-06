@@ -31,16 +31,17 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Whether any provider is actively being used right now. Your usage cannot
-    /// move while nothing is running, so polling hard through a quiet afternoon
-    /// spends rate-limit budget to re-read a number that has not changed.
-    var isBusy: () -> Bool = { false }
-
+    /// How often to look, and it is measured rather than chosen: at one call
+    /// per Claude account per minute this Mac already collects 429s, each
+    /// costing a penalty of 60s doubling to 8 minutes. Polling faster buys
+    /// fewer readings, not more. Reaching for the notch refetches on demand —
+    /// see `refreshIfStale` — which is where freshness actually comes from.
     private let refreshInterval: TimeInterval
     /// How long a snapshot stays believable after its last successful fetch.
     private let staleAfter: TimeInterval
-    /// How often to look when nothing is running.
-    private let idleRefreshInterval: TimeInterval
+    /// When the last fetch was *started*, which is what the unfold cooldown is
+    /// measured from. Started, not finished: a request in flight is already
+    /// buying the freshness a second one would ask for.
     private var lastAttempt: Date?
 
     private let archive: UsageArchive
@@ -55,14 +56,12 @@ final class UsageStore: ObservableObject {
     init(
         providers: [UsageProvider],
         refreshInterval: TimeInterval = 60,
-        idleRefreshInterval: TimeInterval = 5 * 60,
         staleAfter: TimeInterval = 5 * 60,
         archive: UsageArchive = UsageArchive(),
         disconnected: Set<String> = []
     ) {
         self.providers = providers
         self.refreshInterval = refreshInterval
-        self.idleRefreshInterval = idleRefreshInterval
         self.staleAfter = staleAfter
         self.archive = archive
 
@@ -138,7 +137,7 @@ final class UsageStore: ObservableObject {
         refreshNow()
 
         let timer = Timer(timeInterval: refreshInterval, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.tick() }
+            MainActor.assumeIsolated { self?.refreshNow() }
         }
         RunLoop.main.add(timer, forMode: .common)
         self.timer = timer
@@ -163,25 +162,29 @@ final class UsageStore: ObservableObject {
         }
     }
 
-    /// Decides whether this tick is worth a request at all.
-    private func tick() {
-        let waited = lastAttempt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
-        guard Self.shouldRefresh(
-            isBusy: isBusy(),
-            sinceLastAttempt: waited,
-            idleInterval: idleRefreshInterval
-        ) else { return }
-        refreshNow()
-    }
+    /// How long the second account of one tool waits before asking, so the two
+    /// are not inside one rate-limit window.
+    static let accountStagger: TimeInterval = 5
 
-    /// Poll at full rate while something is running; otherwise wait out the
-    /// idle interval. Pure, so the schedule can be tested without a clock.
-    static func shouldRefresh(
-        isBusy: Bool,
-        sinceLastAttempt: TimeInterval,
-        idleInterval: TimeInterval
-    ) -> Bool {
-        isBusy || sinceLastAttempt >= idleInterval
+    /// How long a reading stays fresh enough that reaching for the notch is not
+    /// worth a request. Well under the refresh interval, so unfolding still
+    /// buys you a newer number than the timer would have — and no lower, since
+    /// the notch unfolds on a passing pointer and this is the ceiling on how
+    /// often that can spend the endpoint's budget.
+    static let unfoldCooldown: TimeInterval = 30
+
+    /// Refetch because the notch was opened — unless it was opened a moment ago.
+    ///
+    /// The notch unfolds whenever the pointer brushes the screen edge, so this
+    /// is asked far more often than it should answer. A cooldown rather than a
+    /// debounce: the first unfold after it lapses fetches immediately, which is
+    /// the one that matters, and the ones in between cost nothing. The timer
+    /// shares the same clock, so an unfold seconds after a scheduled fetch is
+    /// free as well.
+    func refreshIfStale(cooldown: TimeInterval = UsageStore.unfoldCooldown) {
+        let waited = lastAttempt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+        guard waited >= cooldown else { return }
+        refreshNow()
     }
 
     func refreshNow() {
@@ -205,7 +208,25 @@ final class UsageStore: ObservableObject {
         refreshing = Set(live.map(\.id))
         defer { refreshing = [] }
         var next: [ProviderSnapshot] = []
+        var previousKind: ProviderKind?
         for provider in live {
+            // Two accounts of one tool are two requests to one endpoint. Sent
+            // back to back they are refused together — the log shows both
+            // Claude accounts taking a 429 in the same millisecond — so the
+            // second one waits a moment rather than arriving inside the first
+            // one's window. Only where there is a shared endpoint to be refused
+            // by: a second local account is a second file read, and sleeping
+            // between those buys nothing but a longer spinner.
+            if provider.kind.sharesARemoteLimit, provider.kind == previousKind {
+                try? await Task.sleep(nanoseconds: UInt64(Self.accountStagger * 1_000_000_000))
+            }
+            previousKind = provider.kind
+            // Checked here as well as after the loop: `Task.sleep` reports
+            // cancellation by throwing, `try?` swallows it, and a refresh
+            // superseded by `replaceProviders` would otherwise carry on
+            // fetching — writing `lastGood` and the archive for an account that
+            // has just been removed, which brings it back at the next launch.
+            guard !Task.isCancelled else { return }
             next.append(await snapshot(from: provider))
         }
         // Superseded mid-flight by `replaceProviders`: these are the old
@@ -226,13 +247,15 @@ final class UsageStore: ObservableObject {
               !refreshing.contains(providerID) else { return }
 
         refreshing.insert(providerID)
+        // A fetch is a fetch: unfolding a second later should not put another
+        // request on the endpoint this one is already asking.
+        lastAttempt = Date()
         Task { [weak self] in
             let fresh = await self?.snapshot(from: provider)
             guard let self, let fresh else { return }
             if let index = self.snapshots.firstIndex(where: { $0.id == providerID }) {
                 self.snapshots[index] = fresh
             }
-            self.lastAttempt = Date()
             // A beat of visible work even when the answer was instant: a spinner
             // that flashes for one frame reads as a glitch, not as a refresh.
             try? await Task.sleep(nanoseconds: 380_000_000)
@@ -326,8 +349,10 @@ final class UsageStore: ObservableObject {
 
     private func snapshot(from provider: UsageProvider) async -> ProviderSnapshot {
         do {
-            let fresh = try await provider.fetchSnapshot()
-            lastGood[provider.id] = (fresh, Date())
+            var fresh = try await provider.fetchSnapshot()
+            let taken = Date()
+            fresh.fetchedAt = taken
+            lastGood[provider.id] = (fresh, taken)
             archive.save(lastGood)
             Log.usage.debug("\(provider.id, privacy: .public): \(fresh.windows.count) window(s)")
             return fresh

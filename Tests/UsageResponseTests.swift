@@ -177,6 +177,17 @@ final class UsageArchiveTests: XCTestCase {
         XCTAssertEqual(restored?.fetchedAt, taken)
     }
 
+    /// The card dates every reading, so the fetch time has to survive the
+    /// archive as well as the process it was taken in.
+    func testTheSnapshotCarriesTheFetchTime() throws {
+        let defaults = makeDefaults()
+        let taken = Date(timeIntervalSince1970: 1_787_900_000)
+        UsageArchive(defaults: defaults).save(["claude": (reading, taken)])
+
+        let restored = try XCTUnwrap(UsageArchive(defaults: defaults).load()["claude"])
+        XCTAssertEqual(restored.snapshot.fetchedAt, taken)
+    }
+
     /// A restored reading is never presented as live.
     func testRestoredReadingsComeBackStale() throws {
         let defaults = makeDefaults()
@@ -229,54 +240,25 @@ final class BackoffPersistenceTests: XCTestCase {
     func testRoundTrips() throws {
         let defaults = makeDefaults()
         let until = Date().addingTimeInterval(120)
-        UsageArchive(defaults: defaults).saveBackoffUntil(until, for: "claude")
+        UsageArchive(defaults: defaults).saveBackoffUntil(until)
 
-        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        let loaded = try XCTUnwrap(UsageArchive(defaults: defaults).loadBackoffUntil())
         XCTAssertEqual(loaded.timeIntervalSince1970, until.timeIntervalSince1970, accuracy: 0.01)
     }
 
     /// An expired back-off is not a back-off; it must not hold the next launch up.
     func testAnExpiredBackoffIsIgnored() {
         let defaults = makeDefaults()
-        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10), for: "claude")
-        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        UsageArchive(defaults: defaults).saveBackoffUntil(Date().addingTimeInterval(-10))
+        XCTAssertNil(UsageArchive(defaults: defaults).loadBackoffUntil())
     }
 
     func testClearingRemovesIt() {
         let defaults = makeDefaults()
         let archive = UsageArchive(defaults: defaults)
-        archive.saveBackoffUntil(Date().addingTimeInterval(120), for: "claude")
-        archive.saveBackoffUntil(nil, for: "claude")
-        XCTAssertNil(archive.loadBackoffUntil(for: "claude"))
-    }
-}
-
-/// Your usage cannot move while nothing is running, so polling hard through a
-/// quiet afternoon spends rate-limit budget re-reading an unchanged number.
-final class RefreshScheduleTests: XCTestCase {
-    private let idle: TimeInterval = 5 * 60
-
-    @MainActor
-    func testBusyAlwaysPolls() {
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: true, sinceLastAttempt: 0, idleInterval: idle))
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: true, sinceLastAttempt: 60, idleInterval: idle))
-    }
-
-    @MainActor
-    func testIdleWaitsOutTheLongerInterval() {
-        XCTAssertFalse(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 60, idleInterval: idle))
-        XCTAssertFalse(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 299, idleInterval: idle))
-        XCTAssertTrue(UsageStore.shouldRefresh(isBusy: false, sinceLastAttempt: 300, idleInterval: idle))
-    }
-
-    /// A first run has never attempted anything and must not be held back.
-    @MainActor
-    func testTheFirstAttemptIsNeverDeferred() {
-        XCTAssertTrue(UsageStore.shouldRefresh(
-            isBusy: false,
-            sinceLastAttempt: .greatestFiniteMagnitude,
-            idleInterval: idle
-        ))
+        archive.saveBackoffUntil(Date().addingTimeInterval(120))
+        archive.saveBackoffUntil(nil)
+        XCTAssertNil(archive.loadBackoffUntil())
     }
 }
 
@@ -438,6 +420,219 @@ final class SingleProviderRefreshTests: XCTestCase {
         let store = store([CountingProvider(id: "a")])
         store.refresh(providerID: "nope")
         XCTAssertTrue(store.refreshing.isEmpty)
+    }
+}
+
+/// The endpoint refuses both Claude accounts together — the log has them taking
+/// a 429 in the same millisecond — so the penalty is one penalty. Kept per
+/// account, each one's wait was re-tripped by its sibling still polling: 60s,
+/// 120, 240, 480, with both rings dimmed the whole way.
+final class ClaudeRateLimitTests: XCTestCase {
+    private func limiter() -> ClaudeRateLimit {
+        ClaudeRateLimit(archive: UsageArchive(defaults: makeSuite()))
+    }
+
+    private func makeSuite() -> UserDefaults {
+        let name = "ClaudeRateLimitTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return defaults
+    }
+
+    func testARefusalForOneAccountHoldsTheOthers() async throws {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        let remaining = await limit.remaining()
+        XCTAssertEqual(try XCTUnwrap(remaining), 60, accuracy: 1,
+                       "the other account was let straight back into the same limit")
+    }
+
+    /// Two accounts refused in the same second: the second refusal must not
+    /// shorten the wait the first one set.
+    func testASecondRefusalNeverShortensTheWait() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 480)
+        _ = await limit.penalise(retryAfter: 60)
+        let remaining = await limit.remaining() ?? 0
+        XCTAssertGreaterThan(remaining, 400)
+    }
+
+    /// A reading getting through means the window has room again — for every
+    /// account, since they share it.
+    func testAReadingGettingThroughClearsItForEveryone() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        await limit.clear()
+        let remaining = await limit.remaining()
+        XCTAssertNil(remaining)
+    }
+
+    /// And the doubling starts over, or it escalates for ever.
+    func testClearingResetsTheDoubling() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        await limit.clear()
+        let attempt = await limit.attempt
+        XCTAssertEqual(attempt, 0)
+    }
+
+    /// Every refusal counts towards the wait, whichever account took it.
+    func testTheDoublingCountsRefusalsFromEveryAccount() async {
+        let limit = limiter()
+        _ = await limit.penalise(retryAfter: 60)
+        let second = await limit.penalise(retryAfter: 60)
+        XCTAssertEqual(second, 2)
+    }
+
+    /// It outlives a relaunch, or the first tick after one walks straight back
+    /// into the limit it is being punished by.
+    func testThePenaltySurvivesARelaunch() async {
+        let archive = UsageArchive(defaults: makeSuite())
+        _ = await ClaudeRateLimit(archive: archive).penalise(retryAfter: 300)
+        let afterRelaunch = await ClaudeRateLimit(archive: archive).remaining()
+        XCTAssertNotNil(afterRelaunch)
+    }
+}
+
+/// Every card dates its reading, so every reading has to carry the time it was
+/// taken — a number with no age on it is read as live.
+@MainActor
+final class ReadingAgeTests: XCTestCase {
+    private final class StubProvider: UsageProvider, @unchecked Sendable {
+        let id = "claude"
+        let displayName = "Claude"
+        let glyph = ProviderGlyph.claude
+        func signOut() async {}
+        func fetchSnapshot() async throws -> ProviderSnapshot {
+            ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
+                             fidelity: .official, status: .ok,
+                             windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)])
+        }
+    }
+
+    func testAFreshReadingIsStampedWithWhenItWasTaken() async throws {
+        let name = "ReadingAgeTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        let store = UsageStore(providers: [StubProvider()],
+                               archive: UsageArchive(defaults: defaults))
+
+        await store.refresh()
+
+        let taken = try XCTUnwrap(store.snapshots.first?.fetchedAt)
+        XCTAssertEqual(taken.timeIntervalSinceNow, 0, accuracy: 5)
+    }
+
+    /// Codex answers out of a rollout file, so a fetch that succeeds this second
+    /// can hand back a reading from days ago and say so in its status. The card
+    /// has to date it from the reading, or it prints "just now" next to a ring
+    /// dimmed for being stale.
+    func testAnOldReadingIsDatedFromWhenItWasTakenNotWhenItWasFetched() throws {
+        let recorded = Date().addingTimeInterval(-3 * 24 * 3600)
+        let snapshot = ProviderSnapshot(
+            id: "codex", displayName: "Codex", glyph: .openai,
+            fidelity: .official, status: .stale(since: recorded),
+            windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)],
+            kind: .codex, fetchedAt: Date()
+        )
+        let taken = try XCTUnwrap(snapshot.readingTakenAt)
+        XCTAssertEqual(taken.timeIntervalSince1970, recorded.timeIntervalSince1970, accuracy: 1)
+    }
+
+    /// A provider that answers live declares nothing older, and then when we
+    /// asked is the only answer there is.
+    func testALiveReadingIsDatedFromTheFetch() throws {
+        let fetched = Date().addingTimeInterval(-120)
+        let snapshot = ProviderSnapshot(
+            id: "claude", displayName: "Claude", glyph: .claude,
+            fidelity: .official, status: .ok,
+            windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)],
+            fetchedAt: fetched
+        )
+        let taken = try XCTUnwrap(snapshot.readingTakenAt)
+        XCTAssertEqual(taken.timeIntervalSince1970, fetched.timeIntervalSince1970, accuracy: 1)
+    }
+
+    /// A cell with no reading has no age to print — the placeholder's
+    /// `distantPast` must not become "56 years ago".
+    func testACellWithNoReadingHasNoAge() {
+        let empty = ProviderSnapshot(
+            id: "claude", displayName: "Claude", glyph: .claude,
+            fidelity: .official, status: .stale(since: .distantPast), windows: []
+        )
+        XCTAssertNil(empty.readingTakenAt)
+    }
+}
+
+/// The notch unfolds whenever the pointer brushes the screen edge, so refetching
+/// on unfold has to be rate-limited: without a cooldown a cursor crossing the
+/// bezel a few times becomes a burst of requests against an endpoint that
+/// answers 429 and then withholds a reading for minutes.
+@MainActor
+final class UnfoldRefreshTests: XCTestCase {
+    private final class CountingProvider: UsageProvider, @unchecked Sendable {
+        let id = "a"
+        let displayName = "Stub"
+        let glyph = ProviderGlyph.claude
+        /// Written from whatever thread the fetch lands on, read from the test's
+        /// main actor, so it is not left to luck.
+        private let lock = NSLock()
+        private var count = 0
+        var calls: Int { lock.withLock { count } }
+
+        func signOut() async {}
+
+        func fetchSnapshot() async throws -> ProviderSnapshot {
+            lock.withLock { count += 1 }
+            return ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
+                                    fidelity: .official, status: .ok,
+                                    windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)])
+        }
+    }
+
+    private func store(_ provider: CountingProvider) -> UsageStore {
+        let name = "UnfoldRefreshTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return UsageStore(providers: [provider], archive: UsageArchive(defaults: defaults))
+    }
+
+    func testABurstOfUnfoldsCostsOneFetch() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        for _ in 0..<6 { store.refreshIfStale() }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(provider.calls, 1, "opening the notch repeatedly fetched every time")
+    }
+
+    /// A floor on the rate, not a mute: the first unfold after the cooldown has
+    /// lapsed still fetches, or the feature would stop working after one use.
+    func testTheFirstUnfoldAfterTheCooldownFetches() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        store.refreshIfStale()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        store.refreshIfStale(cooldown: 0)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(provider.calls, 2)
+    }
+
+    /// The scheduled fetch and the unfold share one clock, so unfolding just
+    /// after a tick is free — the reading it would ask for is the one that
+    /// just landed.
+    func testAnUnfoldJustAfterAScheduledFetchIsFree() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        store.refreshNow()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        store.refreshIfStale()
+
+        XCTAssertEqual(provider.calls, 1)
     }
 }
 

@@ -125,6 +125,11 @@ struct ProviderSnapshot: Identifiable, Equatable {
     /// With two accounts of one tool on the notch, this is what tells the
     /// rings apart.
     var accountLabel: String?
+    /// When this reading was taken. The card says so on its title line —
+    /// always, not only once it has gone stale: a number with no age on it is
+    /// read as live, and after a rate limit it can be minutes old while the
+    /// ring still looks perfectly healthy.
+    var fetchedAt: Date?
 
     /// The number on the cell: the provider's declared primary window — for
     /// Claude, the current session.
@@ -158,6 +163,20 @@ struct ProviderSnapshot: Identifiable, Equatable {
 
     /// A ring can only be drawn when the provider said what the limit was.
     var ringFraction: Double? { usedFraction }
+
+    /// When the numbers on this card were true, which is not always when we
+    /// asked for them.
+    ///
+    /// The provider's own account wins: Codex answers out of a rollout file it
+    /// wrote whenever it last ran, so a fetch that succeeds this second can
+    /// return a reading from Tuesday. `fetchedAt` is the fallback for a
+    /// provider that answers live and so has nothing older to declare.
+    var readingTakenAt: Date? {
+        guard hasReading, let taken = status.staleSince ?? fetchedAt,
+              taken != .distantPast
+        else { return nil }
+        return taken
+    }
 
     /// Signing in means something different per provider, so the prompt has to
     /// say which door to knock on.

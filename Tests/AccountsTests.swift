@@ -179,8 +179,6 @@ final class CodexAccountTests: XCTestCase {
     func testEveryStoreLivesUnderTheHome() {
         let home = URL(fileURLWithPath: "/Users/x/.codex-gmail")
         XCTAssertEqual(CodexStore.stateURL(home: home).path, "/Users/x/.codex-gmail/state_5.sqlite")
-        XCTAssertEqual(CodexStore.desktopStoreURL(home: home).path,
-                       "/Users/x/.codex-gmail/sqlite/codex-dev.db")
         XCTAssertEqual(CodexCredentials.authURL(home: home).path, "/Users/x/.codex-gmail/auth.json")
     }
 }
@@ -204,12 +202,6 @@ final class ProviderFactoryTests: XCTestCase {
                        [.claude, .claude, .cursor, .codex, .codex, .antigravity])
         XCTAssertEqual(providers.map(\.displayName),
                        ["Claude", "Claude Max", "Cursor", "Codex", "Codex Gmail", "Antigravity"])
-    }
-
-    func testEveryProviderHasAMonitor() {
-        let providers = ProviderFactory.providers(for: accounts).map(\.id)
-        let monitors = ProviderFactory.monitors(for: accounts)
-        XCTAssertEqual(Set(monitors.keys), Set(providers))
     }
 
     func testTheShippedPairIsWhatShippedBefore() {
@@ -353,10 +345,8 @@ final class ProviderKindTests: XCTestCase {
     func testTheAccountLineIsBudgeted() {
         XCTAssertGreaterThan(NotchLayout.cardHeight(windowCount: 1, accountLine: true),
                              NotchLayout.cardHeight(windowCount: 1))
-        XCTAssertGreaterThanOrEqual(NotchLayout.maxCardHeight(sessionCap: NotchLayout.defaultSessionCap,
-                                                              accountLine: true),
+        XCTAssertGreaterThanOrEqual(NotchLayout.maxCardHeight(accountLine: true),
                                     NotchLayout.cardHeight(windowCount: NotchLayout.maxWindowCount,
-                                                           sessionCount: NotchLayout.defaultSessionCap + 1,
                                                            accountLine: true))
     }
 
@@ -366,40 +356,27 @@ final class ProviderKindTests: XCTestCase {
     @MainActor func testThePanelReservesTheLineOnlyWhenACardDrawsOne() {
         let model = NotchViewModel()
         model.edge = .right
-        model.screenSize = CGSize(width: 1800, height: 1169)
         let bare = ProviderSnapshot(id: "a", displayName: "A", glyph: .claude,
                                     fidelity: .official, status: .ok, windows: [])
         model.snapshots = [bare]
-        let without = model.maxCardHeight(cellCount: 1)
+        let without = model.maxCardHeight
         var named = bare
         named.accountLabel = "me@example.com"
         model.snapshots = [named]
-        XCTAssertGreaterThan(model.maxCardHeight(cellCount: 1), without)
+        XCTAssertGreaterThan(model.maxCardHeight, without)
     }
 }
 
-/// Two Claude accounts are two tokens with two rate-limit buckets.
-final class BackoffPerAccountTests: XCTestCase {
-    private func makeDefaults() -> UserDefaults {
-        let name = "BackoffPerAccountTests.\(UUID().uuidString)"
+/// Every Claude account serves one penalty, under the key the single-account
+/// build wrote — so an update landing mid-penalty still waits it out instead of
+/// starting clean and walking back into the limit.
+final class BackoffKeyTests: XCTestCase {
+    func testThePenaltyIsReadFromTheKeyItWasAlwaysWrittenUnder() {
+        let name = "BackoffKeyTests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: name)!
         defaults.removePersistentDomain(forName: name)
-        return defaults
-    }
-
-    func testOneAccountsPenaltyDoesNotSilenceAnother() {
-        let archive = UsageArchive(defaults: makeDefaults())
-        archive.saveBackoffUntil(Date().addingTimeInterval(120), for: "claude.max")
-        XCTAssertNotNil(archive.loadBackoffUntil(for: "claude.max"))
-        XCTAssertNil(archive.loadBackoffUntil(for: "claude"))
-    }
-
-    /// The default account's penalty was stored under the old, unqualified
-    /// key; an update mid-penalty must still wait it out.
-    func testTheDefaultAccountReadsTheKeyItAlwaysHad() {
-        let defaults = makeDefaults()
         defaults.set(Date().addingTimeInterval(120), forKey: "backoffUntil")
-        XCTAssertNotNil(UsageArchive(defaults: defaults).loadBackoffUntil(for: "claude"))
+        XCTAssertNotNil(UsageArchive(defaults: defaults).loadBackoffUntil())
     }
 }
 
