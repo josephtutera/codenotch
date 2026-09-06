@@ -367,11 +367,11 @@ final class UsageStore: ObservableObject {
     private func degraded(provider: UsageProvider, error: Error) -> ProviderSnapshot {
         let status = Self.status(for: error)
 
-        // Some failures are statements about the account rather than a hiccup:
-        // signed out, or a plan that meters nothing. Re-showing an old reading
-        // through one of those would present a number that is no longer true —
-        // and, after an endpoint change, one that came from somewhere we no
-        // longer read. So the remembered reading is dropped, not dimmed.
+        // Being signed out is a statement about the account rather than a
+        // hiccup. Re-showing an old reading through it would present a number
+        // that is no longer true — and, after an endpoint change, one that came
+        // from somewhere we no longer read. So the remembered reading is
+        // dropped, not dimmed.
         if Self.supersedesHistory(status) {
             lastGood[provider.id] = nil
             archive.save(lastGood)
@@ -398,11 +398,19 @@ final class UsageStore: ObservableObject {
     /// merely old.
     static func supersedesHistory(_ status: ProviderStatus) -> Bool {
         switch status {
-        case .needsAuth, .unsupported: return true
+        case .needsAuth:               return true
         // A refusal says nothing about the reading — the credential is there
         // and still valid, we were simply not let in to re-read it. Discarding
         // the last number would punish someone for pressing the wrong button.
         case .accessDenied:            return false
+        // "Nothing to meter" is not always a statement about the plan. Codex
+        // reports it whenever its app server has not answered *and* the rollout
+        // log has nothing yet — a startup race, not a fact about the account —
+        // and it was throwing away the last good Codex reading every time,
+        // blanking a ring that had a number a second earlier. An account that
+        // genuinely meters nothing has no remembered reading to keep, so
+        // keeping history here costs that case nothing.
+        case .unsupported:             return false
         case .ok, .stale, .error:      return false
         }
     }
