@@ -390,7 +390,15 @@ final class UsageStore: ObservableObject {
         // window it gets marked, and the ring dims.
         let age = Date().timeIntervalSince(previous.fetchedAt)
         var snapshot = previous.snapshot
-        snapshot.status = age > staleAfter ? .stale(since: previous.fetchedAt) : previous.snapshot.status
+        if case .loginExpired = status {
+            // Kept whatever its age: an expired login does not start refreshing
+            // itself after five minutes, and the card's note is the only thing
+            // on screen that explains why the number has stopped. Dated from
+            // the reading, not from the moment the dead token was found.
+            snapshot.status = .loginExpired(since: previous.fetchedAt)
+        } else {
+            snapshot.status = age > staleAfter ? .stale(since: previous.fetchedAt) : previous.snapshot.status
+        }
         return snapshot
     }
 
@@ -412,6 +420,8 @@ final class UsageStore: ObservableObject {
         // keeping history here costs that case nothing.
         case .unsupported:             return false
         case .ok, .stale, .error:      return false
+        // The whole point of naming it: the reading it produced is still true.
+        case .loginExpired:            return false
         }
     }
 
@@ -426,8 +436,10 @@ final class UsageStore: ObservableObject {
         case UsageProviderError.credentialExpired:
             // Ages the reading rather than discarding it: the number was true
             // when it was taken, and the token will refresh itself in the
-            // ordinary course of using the app that owns it.
-            return .stale(since: Date())
+            // ordinary course of using the app that owns it. Named rather than
+            // folded into plain staleness, so the card can say why a ring has
+            // stopped moving instead of leaving it to look broken.
+            return .loginExpired(since: Date())
         case UsageProviderError.rateLimited:
             // Not an error the user can do anything about, and the last good
             // reading is still roughly true, so it reads as staleness.

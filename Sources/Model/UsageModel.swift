@@ -17,13 +17,28 @@ enum ProviderStatus: Equatable {
     case needsAuth
     /// macOS was asked for a credential that exists, and refused.
     case accessDenied
+    /// The borrowed login has expired, and only the tool that owns it can mint
+    /// a new one. A kind of staleness with a cause worth naming: the reading is
+    /// still true, there is simply no way to take a newer one until that tool
+    /// runs again, and nothing the user does to *this* app will change that.
+    case loginExpired(since: Date)
     case unsupported(String)
     case error(String)
 
-    var isStale: Bool { if case .stale = self { return true }; return false }
+    var isStale: Bool {
+        switch self {
+        case .stale, .loginExpired: return true
+        default:                    return false
+        }
+    }
 
     /// When the reading behind this status was actually taken.
-    var staleSince: Date? { if case .stale(let since) = self { return since }; return nil }
+    var staleSince: Date? {
+        switch self {
+        case .stale(let since), .loginExpired(let since): return since
+        default:                                          return nil
+        }
+    }
 }
 
 /// One metered window a provider exposes — Claude has two (the rolling session
@@ -190,6 +205,28 @@ struct ProviderSnapshot: Identifiable, Equatable {
         }
     }
 
+    /// Why a reading has stopped moving, said *beside* the numbers rather than
+    /// instead of them.
+    ///
+    /// Claude Code mints an eight-hour token when it runs and refreshes it the
+    /// next time it runs. This app reads that token and deliberately never
+    /// writes one, so a profile left alone overnight has a perfectly good
+    /// reading and no way to take a newer one. From the outside that was
+    /// indistinguishable from a broken ring — a dimmed number, no explanation,
+    /// and nothing in the app that would ever fix it.
+    ///
+    /// Scoped to Claude on purpose. Antigravity raises the same error to mean
+    /// "still true, just old" rather than a login that has run out, and telling
+    /// someone to go and sign in there would send them to fix the wrong thing.
+    static let expiredLoginNote =
+        "This login has expired. Claude Code refreshes it the next time it runs "
+        + "on this account."
+
+    var frozenNote: String? {
+        guard hasReading, kind == .claude, case .loginExpired = status else { return nil }
+        return Self.expiredLoginNote
+    }
+
     /// What the tooltip says instead of limit rows when there is nothing to show.
     var statusMessage: String? {
         if hasReading { return nil }
@@ -200,9 +237,10 @@ struct ProviderSnapshot: Identifiable, Equatable {
             // would send someone who *is* signed in to fix the wrong thing.
             return "Codenotch was refused access to \(displayName)'s saved "
                  + "login. Click this ring to ask again, and choose Always Allow."
+        case .loginExpired where kind == .claude: return Self.expiredLoginNote
         case .unsupported(let why): return why
         case .error(let why): return "Couldn't read usage — \(why)"
-        case .stale, .ok:     return "Waiting for the first reading…"
+        case .stale, .loginExpired, .ok: return "Waiting for the first reading…"
         }
     }
 }

@@ -280,6 +280,15 @@ final class SupersedingStatusTests: XCTestCase {
         XCTAssertFalse(UsageStore.supersedesHistory(.ok))
     }
 
+    /// An expired login is the one staleness with a cause worth naming, and it
+    /// must not throw the reading away — the number was true when it was taken.
+    @MainActor
+    func testAnExpiredLoginKeepsTheRememberedReading() {
+        let status = UsageStore.statusForTesting(UsageProviderError.credentialExpired)
+        XCTAssertFalse(UsageStore.supersedesHistory(status))
+        XCTAssertTrue(status.isStale, "the ring has to dim, whatever the cause")
+    }
+
     /// The reported failure: Codex answers `nothingMetered` whenever its app
     /// server is not up *and* the rollout log has nothing yet, which is a race
     /// at launch and not a fact about the plan. Dropping the reading blanked a

@@ -742,6 +742,7 @@ final class StatusMessageHeightTests: XCTestCase {
             ("unsupported", .unsupported("The free plan has nothing for Cursor to meter yet")),
             ("error", .error("HTTP 500")),
             ("stale", .stale(since: .distantPast)),
+            ("loginExpired", .loginExpired(since: .distantPast)),
             ("ok", .ok)
         ]
         return [("claude", "Claude"), ("cursor", "Cursor"),
@@ -791,6 +792,24 @@ final class StatusMessageHeightTests: XCTestCase {
             let lines = height / NotchLayout.cardBodyLineHeight
             XCTAssertEqual(lines, lines.rounded(), accuracy: 0.0001, "\(text.prefix(20))")
         }
+    }
+
+    /// The tallest card there is: every window, an account line, *and* the note
+    /// saying why the numbers have stopped. It appears the first time a token
+    /// runs out, which is exactly when the card is being read, so the panel has
+    /// to have been sized for it long before.
+    func testTheFullestCardWithItsFrozenNoteStillFits() {
+        let height = NotchLayout.cardHeight(
+            windowCount: NotchLayout.maxWindowCount,
+            note: ProviderSnapshot.expiredLoginNote,
+            accountLine: true
+        )
+        XCTAssertLessThanOrEqual(height, NotchLayout.maxCardHeight(accountLine: true))
+        XCTAssertGreaterThan(
+            height,
+            NotchLayout.cardHeight(windowCount: NotchLayout.maxWindowCount, accountLine: true),
+            "the note has to be paid for, not absorbed"
+        )
     }
 
     /// A status card still has to fit the panel that was sized without knowing

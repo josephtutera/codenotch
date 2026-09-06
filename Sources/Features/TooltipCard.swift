@@ -236,6 +236,17 @@ private struct ProviderTooltip: View {
                     .padding(.top, NotchLayout.headerToBlock)
             }
 
+            // Why the numbers below have stopped, above the numbers so it is
+            // read before them. Quiet rather than loud: nothing here is
+            // blocking work, the reading has simply gone still.
+            if let note = snapshot.frozenNote {
+                Text(note)
+                    .font(Typography.cardBody)
+                    .foregroundStyle(Palette.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, NotchLayout.headerToBlock)
+            }
+
             if let message = snapshot.statusMessage {
                 Text(message)
                     .font(Typography.cardBody)
@@ -284,12 +295,7 @@ struct TooltipCard: View {
     /// The same figure the hover region uses, so what is drawn and what is
     /// reachable can never drift apart.
     private var height: CGFloat {
-        NotchLayout.cardHeight(
-            windowCount: snapshot.windows.count,
-            statusMessage: snapshot.statusMessage,
-            blockMessage: snapshot.block?.summary(now: now),
-            accountLine: snapshot.accountLabel != nil
-        )
+        NotchLayout.cardHeight(for: snapshot, now: now)
     }
 
     var body: some View {

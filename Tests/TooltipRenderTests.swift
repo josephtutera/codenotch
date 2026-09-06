@@ -83,4 +83,52 @@ final class TooltipRenderTests: XCTestCase {
             try png.write(to: URL(fileURLWithPath: path))
         }
     }
+
+    /// The Claude Team card as it actually stood the morning this was reported:
+    /// a real session percentage, taken eight hours ago, and no way to take a
+    /// newer one. The note is the whole point — without it the card is a dimmed
+    /// number with nothing to say for itself, which is what sent the user
+    /// looking for a bug. `TOOLTIP_FROZEN_RENDER_PATH` writes the frame out.
+    func testTheCardSaysWhyAReadingHasStopped() throws {
+        let now = Date()
+        let takenAt = now.addingTimeInterval(-8 * 3600)
+        let snapshot = ProviderSnapshot(
+            id: "claude.team", displayName: "Claude Team", glyph: .claude,
+            fidelity: .official, status: .loginExpired(since: takenAt),
+            windows: [
+                LimitWindow(id: "session", label: "Current session", usedFraction: 0.79,
+                            resetsAt: takenAt.addingTimeInterval(3 * 3600)),
+                LimitWindow(id: "weekly_all", label: "All models", usedFraction: 0.24,
+                            resetsAt: now.addingTimeInterval(2 * 24 * 3600))
+            ],
+            headlineID: "session", kind: .claude,
+            accountLabel: "joseph@carepilot.com · CarePilot", fetchedAt: takenAt
+        )
+
+        func render(_ snapshot: ProviderSnapshot) throws -> NSImage {
+            let renderer = ImageRenderer(content: TooltipCard(snapshot: snapshot, now: now)
+                .padding(20)
+                .background(Color.black))
+            renderer.scale = 3
+            return try XCTUnwrap(renderer.nsImage)
+        }
+
+        XCTAssertEqual(snapshot.frozenNote, ProviderSnapshot.expiredLoginNote)
+        // The rows are still there: the note explains the numbers, it does not
+        // replace them.
+        XCTAssertNil(snapshot.statusMessage)
+
+        var refreshed = snapshot
+        refreshed.status = .ok
+        let frozen = try render(snapshot)
+        XCTAssertGreaterThan(frozen.size.height, try render(refreshed).size.height,
+                             "the note drew no height, so it is not on the card")
+
+        if let path = ProcessInfo.processInfo.environment["TOOLTIP_FROZEN_RENDER_PATH"] {
+            let tiff = try XCTUnwrap(frozen.tiffRepresentation)
+            let png = try XCTUnwrap(NSBitmapImageRep(data: tiff)?
+                .representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: path))
+        }
+    }
 }
