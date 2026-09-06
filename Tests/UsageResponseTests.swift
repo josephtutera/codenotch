@@ -412,6 +412,74 @@ final class SingleProviderRefreshTests: XCTestCase {
     }
 }
 
+/// The notch unfolds whenever the pointer brushes the screen edge, so refetching
+/// on unfold has to be rate-limited: without a cooldown a cursor crossing the
+/// bezel a few times becomes a burst of requests against an endpoint that
+/// answers 429 and then withholds a reading for minutes.
+@MainActor
+final class UnfoldRefreshTests: XCTestCase {
+    private final class CountingProvider: UsageProvider, @unchecked Sendable {
+        let id = "a"
+        let displayName = "Stub"
+        let glyph = ProviderGlyph.claude
+        private(set) var calls = 0
+
+        func signOut() async {}
+
+        func fetchSnapshot() async throws -> ProviderSnapshot {
+            calls += 1
+            return ProviderSnapshot(id: id, displayName: displayName, glyph: glyph,
+                                    fidelity: .official, status: .ok,
+                                    windows: [LimitWindow(id: "w", label: "W", usedFraction: 0.5)])
+        }
+    }
+
+    private func store(_ provider: CountingProvider) -> UsageStore {
+        let name = "UnfoldRefreshTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name)!
+        defaults.removePersistentDomain(forName: name)
+        return UsageStore(providers: [provider], archive: UsageArchive(defaults: defaults))
+    }
+
+    func testABurstOfUnfoldsCostsOneFetch() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        for _ in 0..<6 { store.refreshIfStale() }
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(provider.calls, 1, "opening the notch repeatedly fetched every time")
+    }
+
+    /// A floor on the rate, not a mute: the first unfold after the cooldown has
+    /// lapsed still fetches, or the feature would stop working after one use.
+    func testTheFirstUnfoldAfterTheCooldownFetches() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        store.refreshIfStale()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        store.refreshIfStale(cooldown: 0)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+
+        XCTAssertEqual(provider.calls, 2)
+    }
+
+    /// The scheduled fetch and the unfold share one clock, so unfolding just
+    /// after a tick is free — the reading it would ask for is the one that
+    /// just landed.
+    func testAnUnfoldJustAfterAScheduledFetchIsFree() async {
+        let provider = CountingProvider()
+        let store = store(provider)
+
+        store.refreshNow()
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        store.refreshIfStale()
+
+        XCTAssertEqual(provider.calls, 1)
+    }
+}
+
 /// Overnight the Claude token ages out, because this app deliberately does not
 /// refresh a credential it does not own — Claude Code rotates it whenever it
 /// next runs. What must not happen is the notch demanding a sign-in for a token

@@ -47,6 +47,12 @@ enum ReleaseNotes {
                     detail: "It used to drop to every five minutes when nothing "
                           + "local was running. With nothing local to watch, "
                           + "the numbers are simply kept current."
+                ),
+                ReleaseNote.Change(
+                    title: "Reaching for the notch refetches",
+                    detail: "So the number you open it to read is the current "
+                          + "one, not one from up to half a minute ago. Opening "
+                          + "it again within 15 seconds costs nothing."
                 )
             ]
         ),

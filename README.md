@@ -118,9 +118,11 @@ only — 60s, doubling per consecutive 429, capped at 15 minutes. The last good
 reading is kept across launches, so a refused fetch shows dated numbers rather
 than nothing; the ring dims and the tooltip header says how old they are. The
 back-off deadline is persisted too, so relaunching during a penalty waits instead
-of spending an attempt on it. Polling runs every 30 seconds; clicking a ring
-refetches that provider alone, and right-clicking the notch offers **Refresh
-now** for all of them.
+of spending an attempt on it. Polling runs every 30 seconds, and reaching for
+the notch refetches on the spot — at most once every 15 seconds, because the
+notch unfolds whenever the pointer brushes the bezel. Clicking a ring refetches
+that provider alone, and right-clicking the notch offers **Refresh now** for all
+of them.
 
 **Logs:** the app is an agent with no window, so anything worth diagnosing goes to
 the unified log.

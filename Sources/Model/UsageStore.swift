@@ -38,6 +38,10 @@ final class UsageStore: ObservableObject {
     private let refreshInterval: TimeInterval
     /// How long a snapshot stays believable after its last successful fetch.
     private let staleAfter: TimeInterval
+    /// When the last fetch was *started*, which is what the unfold cooldown is
+    /// measured from. Started, not finished: a request in flight is already
+    /// buying the freshness a second one would ask for.
+    private var lastAttempt: Date?
 
     private let archive: UsageArchive
     private var lastGood: [String: (snapshot: ProviderSnapshot, fetchedAt: Date)] = [:]
@@ -157,12 +161,32 @@ final class UsageStore: ObservableObject {
         }
     }
 
+    /// How long a reading stays fresh enough that reaching for the notch is not
+    /// worth a request. Well under the refresh interval, so unfolding still
+    /// buys you a newer number than the timer would have.
+    static let unfoldCooldown: TimeInterval = 15
+
+    /// Refetch because the notch was opened — unless it was opened a moment ago.
+    ///
+    /// The notch unfolds whenever the pointer brushes the screen edge, so this
+    /// is asked far more often than it should answer. A cooldown rather than a
+    /// debounce: the first unfold after it lapses fetches immediately, which is
+    /// the one that matters, and the ones in between cost nothing. The timer
+    /// shares the same clock, so an unfold seconds after a scheduled fetch is
+    /// free as well.
+    func refreshIfStale(cooldown: TimeInterval = UsageStore.unfoldCooldown) {
+        let waited = lastAttempt.map { Date().timeIntervalSince($0) } ?? .greatestFiniteMagnitude
+        guard waited >= cooldown else { return }
+        refreshNow()
+    }
+
     func refreshNow() {
         guard !isRefreshing else {
             Log.usage.notice("refresh skipped: one already in flight")
             return
         }
         isRefreshing = true
+        lastAttempt = Date()
         refreshTask = Task { [weak self] in
             await self?.refresh()
             // A cancelled refresh was superseded by another; the flag is that

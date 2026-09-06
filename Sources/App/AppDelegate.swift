@@ -163,6 +163,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
                 .store(in: &cancellables)
             store.start()
+
+            // Reaching for the notch refetches, so what you are about to read is
+            // current rather than up to a refresh interval old. Rate-limited in
+            // the store: the notch unfolds whenever the pointer brushes the
+            // screen edge, and every fetch is an HTTPS call per Claude account
+            // against an endpoint that answers 429.
+            controller.model.$isExpanded
+                .removeDuplicates()
+                .filter { $0 }
+                .receive(on: RunLoop.main)
+                .sink { [weak store] _ in store?.refreshIfStale() }
+                .store(in: &cancellables)
+
             controller.onRefresh = { [weak store] in store?.refreshNow() }
             controller.onRefreshProvider = { [weak store] id in store?.refresh(providerID: id) }
             store.$refreshing
